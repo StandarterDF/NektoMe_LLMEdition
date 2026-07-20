@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ru" scheme="space_gray">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NektoMe AI - Анонимный чат с AI</title>
+    <meta name="theme-color" content="#4d657f">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=PT+Sans:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body class="night_theme">
+    <div class="navbar navbar-inverse navbar-fixed-top no_select_text">
+        <div class="container swipes">
+            <div class="row center-block text-center">
+                <div class="navbar-header">
+                    <button data-target=".navbar-collapse" data-toggle="collapse" class="navbar-toggle" type="button">
+                        <span class="sr-only">Toggle navigation</span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                    </button>
+                    <a class="navbar-brand"><span>Nekto.</span>me AI</a>
+                </div>
+                <div class="navbar-collapse collapse">
+                    <ul class="float_right nav navbar-nav">
+                        <li class="sel"><a href="/">Чат</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container swipes">
+        <div class="row center-block">
+            <div class="chat-box" id="chat_box">
+                <div class="row step_chatbox main_step adult_topic_search">
+                    <div class="col-lg-12">
+                        <div class="topicRow row">
+                            <div class="col-xs-4 col-sm-4 col-md-4 col-lg-4">
+                                <label class="lb_search no_select_text">Тема общения:</label>
+                                <div class="btn-group">
+                                    <button class="btn btnradio btn-default" data-topic="general">Общение</button>
+                                </div>
+                            </div>
+                            <div class="col-xs-4 col-sm-4 col-md-4 col-lg-4">
+                                <label class="lb_search no_select_text">&nbsp;</label>
+                                <div class="btn-group">
+                                    <button class="btn btnradio btn-default checked" data-topic="flirt">Флирт 18+</button>
+                                </div>
+                            </div>
+                            <div class="col-xs-4 col-sm-4 col-md-4 col-lg-4">
+                                <label class="lb_search no_select_text">&nbsp;</label>
+                                <div class="btn-group">
+                                    <button class="btn btnradio btn-default" data-topic="roleplay">Ролка</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="sexRow row">
+                            <div class="col-xs-6 col-sm-6 col-md-6 col-lg-6 twoBtns">
+                                <label class="lb_search no_select_text">Ваш пол:</label>
+                                <div class="btn-group">
+                                    <button class="btn btnradio btn-default checked" data-sex="male">М</button>
+                                    <button class="btn btnradio btn-default" data-sex="female">Ж</button>
+                                </div>
+                            </div>
+                            <div class="col-xs-6 col-sm-6 col-md-6 col-lg-6 wishSex twoBtns">
+                                <label class="lb_search no_select_text">Пол собеседника:</label>
+                                <div class="btn-group">
+                                    <button class="btn btnradio btn-default disabled" data-wish="male">М</button>
+                                    <button class="btn btnradio btn-default checked disabled" data-wish="female">Ж</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row row-search">
+                            <div class="col-xs-6 col-sm-6 col-md-6 col-lg-6">
+                                <label class="lb_search no_select_text">Ваш возраст:</label>
+                                <div class="s-age">
+                                    <button class="btn btnradio btn-default" data-age="18-25">от 18 до 25 лет</button>
+                                    <button class="btn btnradio btn-default" data-age="26-35">от 26 до 35 лет</button>
+                                    <button class="btn btnradio btn-default" data-age="36+">старше 36 лет</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row row-search">
+                            <div class="col-xs-12 search_btn_container">
+                                <button id="searchCompanyBtn" class="btn btn-my2">Начать общение</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row step_chatbox chat_step" style="display:none;">
+                    <div class="col-lg-12" style="padding-left:0;padding-right:0;">
+                        <div class="header_chat adult_topic">
+                            <div class="left_block_hc">
+                                <span class="who_chat weight_txt" id="interlocutor_name">Собеседник</span>
+                            </div>
+                            <div class="right_block_hc">
+                                <button id="change_params_but" class="btn btn-my1" style="display:none;">✕ Закончить</button>
+                            </div>
+                        </div>
+
+                        <div class="window_chat_block" id="chat_messages">
+                            <div class="window_chat_dialog_write" id="typing_indicator" style="display:none;">
+                                <span>Собеседник печатает...</span>
+                            </div>
+                        </div>
+
+                        <div class="window_chat_message">
+                            <div class="row" style="margin:0;">
+                                <div class="col-xs-10 col-sm-11" style="padding:0;">
+                                    <div class="box_message message_box_2">
+                                        <div class="emojionearea">
+                                            <div class="emojionearea-editor" id="message_input" contenteditable="true" placeholder="Введите сообщение..."></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-xs-2 col-sm-1" style="padding:0;text-align:center;">
+                                    <div class="smile_panel_button_send">
+                                        <button id="sendMessageBtn" class="send_btn_circle" disabled>
+                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                                                <path d="M22 2L11 13"></path>
+                                                <path d="M22 2L15 22L11 13L2 9L22 2Z"></path>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="talk_over" id="talk_over" style="display:none;">
+                            <div class="talk_over_text">
+                                Собеседник отключился. <span>Пожаловаться</span>
+                            </div>
+                            <div class="talk_over_button_block">
+                                <button class="talk_over_button" id="newChatBtn">Новый собеседник</button>
+                                <button class="talk_over_button blue_bg" id="changeParamsBtn">Изменить параметры поиска</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>

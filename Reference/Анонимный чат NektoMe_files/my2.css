@@ -1,0 +1,226 @@
+.sidebar-block {
+padding:0;
+border:1px solid #c7d3f5;
+border-top:0;
+background:white;
+}
+.header-sidebar-block {
+background: #dfeaf1 none repeat scroll 0 0;
+ border-bottom: 1px solid #98b2e0;
+height: 38px;
+padding-top: 12px;
+padding-left:15px;
+padding-right:15px;
+}
+.header-sidebar-title {
+font-weight:600;
+color: #446580;
+font-size:14px;
+float:left;
+}
+.header-sidebar-title-ic {
+float:right;
+font-size:16px;
+color:#446580;
+}
+.header-sidebar-button{
+padding:12px 15px 12px 10px;
+}
+.header-sidebar-button div{
+font-weight:bold;
+color: #446580;
+font-size:16px;
+}
+.header-sidebar-button div:hover{
+text-decoration:none;
+color: #337ab7;
+}
+.header-sidebar-button div > i {
+background:#1e94d4;
+color:white;
+font-size:24px;
+padding:8px;
+border-radius:50%;
+margin-right:15px;
+}
+.spisok-dialogs-block {
+background:#eef1f4;
+border-top:2px solid #cedaf2;
+}
+.spisok-dialogs-elem {
+border-bottom:1px solid white;
+padding:12px 10px 12px 10px;
+}
+.spisok-dialogs-elem-avatar {
+background:#1e94d4;
+color:white;
+display:inline-block;
+border-radius:50%;
+width:40px;
+height:40px;
+text-align:center;
+line-height:40px;
+font-size:18px;
+vertical-align:middle;
+}
+.spisok-dialogs-elem-persona {
+display:inline-block;
+margin-left:5px;
+vertical-align:middle;
+}
+.spisok-dialogs-persona-name {
+color:#6a6b72;
+font-weight:bold;
+font-size:14px;
+}
+.spisok-dialogs-elem a:hover .spisok-dialogs-persona-name {
+color:#446580;
+}
+i.fa.ic-online {
+color:#65cdf8;
+font-size:10px;
+}
+.spisok-dialogs-elem-persona {
+white-space: nowrap; 
+overflow: hidden; 
+text-overflow: ellipsis; 
+width:81%;
+}
+a .spisok-dialogs-persona-message {
+color:#6a6b72;
+}
+.spisok-dialogs-persona-message {
+white-space: nowrap;
+overflow: hidden;
+text-overflow: ellipsis; 
+}
+.spisok-dialogs-persona-message.neprochitano {
+background: #e1eaf3;
+padding: 5px;
+}
+.spisok-dialogs-elem a {
+text-decoration:none;
+}
+.btn-new-my {
+    background: #1e94d4 none repeat scroll 0 0;
+    color: white;
+    font-weight: bolder;
+    height: 26px;
+    padding-top: 2px;
+}
+.btn-new-my2 {
+    background: #6cbf69 none repeat scroll 0 0;
+    color: white;
+    font-weight: bolder;
+    height: 26px;
+    padding-top: 2px;
+}
+
+#sidebar-toggle {
+    background: #4d657f;
+    border:1px solid #333;
+    border-radius: 4px;
+    display: block;
+    position: relative;
+    padding: 10px 7px;
+    float: left;
+    margin-bottom: 8px;
+    margin-top: 8px;
+    padding: 9px 10px;
+    margin-bottom: 8px;
+    display:none;
+}
+
+@media only screen and (max-width:990px){
+    body,html{
+        overflow-x: hidden;
+    }
+    /*.navbar-toggle{
+        display:none;
+    }*/
+    .step_chatbox.chat_step .col-lg-12{
+        padding-right:0 !important;
+    }
+    .step_chatbox.chat_step.row{
+        margin-right:0 !important;
+    }
+    .sidebar-block{
+        position: absolute;
+        width: 295px;
+        height: 100%;
+        left: -295px;
+        padding-left:10px;
+        box-sizing: border-box;
+        -moz-box-sizing: border-box;
+    }
+    #sidebar-toggle {
+        display:block;
+    }
+
+    #sidebar-toggle:hover {
+        background: #333;
+    }
+
+    #sidebar-toggle .bar {
+        display: block;
+        width: 18px;
+        margin-bottom: 3px;
+        height: 2px;
+        background-color: #fff;
+        border-radius: 1px;
+    }
+
+    #sidebar-toggle .bar:last-child {
+        margin-bottom: 0;
+    }
+    .chat_container {
+        position: relative;
+        height: 100%;
+        width: 100%;
+        left: 0;
+        -webkit-transition:  left 0.4s ease-in-out;
+        -moz-transition:  left 0.4s ease-in-out;
+        -ms-transition:  left 0.4s ease-in-out;
+        -o-transition:  left 0.4s ease-in-out;
+        transition:  left 0.4s ease-in-out;
+    }
+    .swipes{
+        position: relative;
+        height: 100%;
+        width: 100%;
+        left: 0;
+        -webkit-transition:  left 0.4s ease-in-out;
+        -moz-transition:  left 0.4s ease-in-out;
+        -ms-transition:  left 0.4s ease-in-out;
+        -o-transition:  left 0.4s ease-in-out;
+        transition:  left 0.4s ease-in-out;
+    }
+    .swipes.open-sidebar {
+        left: 295px;
+    }
+
+    .chat_container.open-sidebar {
+        padding-left: 0;
+        left: 295px;
+    }
+
+}
+
+@media only screen and (max-width:350px) {
+    .sidebar-block{
+        width: 265px;
+        left: -265px;
+    }
+    .swipes.open-sidebar {
+        left: 265px;
+    }
+    .spisok-dialogs-elem-persona {
+        width:72%;
+    }
+
+    .chat_container.open-sidebar {
+        padding-left: 0;
+        left: 265px;
+    }
+}
+
