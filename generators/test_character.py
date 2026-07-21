@@ -1,5 +1,7 @@
 import sys
+import os
 import io
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 from generators.char_generator import generate
