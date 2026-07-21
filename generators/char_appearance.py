@@ -1,5 +1,5 @@
 import random
-from char_data import hair_styles
+from generators.char_data import hair_styles
 
 face_shapes = ['овальное', 'круглое', 'треугольное', 'квадратное', 'сердцевидное', 'ромбовидное']
 forehead_types = ['высокий', 'низкий', 'средний', 'широкий', 'узкий']

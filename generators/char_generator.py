@@ -1,10 +1,10 @@
 import random
 import json
-from char_model import (
+from generators.char_model import (
     Character, weighted_choice, weighted_sample, pick_from_pool,
     random_date, zodiac_sign,
 )
-from char_data import (
+from generators.char_data import (
     male_names, female_names, male_surnames, female_surnames, cities,
     eye_colors, hair_colors, hair_lengths, body_types, skin_tones,
     positive_traits, negative_traits, hobbies_male, hobbies_female,
@@ -16,7 +16,7 @@ from char_data import (
     relationship_statuses,
     hair_styles, movie_examples, book_examples, music_examples, trauma_data,
 )
-from char_profiles import (
+from generators.char_profiles import (
     temperaments, archetypes, mbti_profiles, archetype_mbti_compat,
     archetype_profession_groups, age_groups, age_group_profiles,
     age_group_hobbies_boost, age_group_professions, age_group_fetishes,
@@ -25,8 +25,8 @@ from char_profiles import (
     archetype_fetish_mods, beauty_fetish_mods, body_size_fetish_mods,
     wealth_levels, kinkiness_levels, chat_motivations,
 )
-from char_appearance import generate_appearance, fashion_items
-from char_bio import generate_backstory, generate_bio
+from generators.char_appearance import generate_appearance, fashion_items
+from generators.char_bio import generate_backstory, generate_bio
 
 
 def generate(seed=None, gender=None, age_group=None):

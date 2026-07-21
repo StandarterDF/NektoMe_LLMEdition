@@ -2,7 +2,7 @@ import sys
 import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-from char_generator import generate
+from generators.char_generator import generate
 
 line = '=' * 48 if sys.stdout.encoding.lower() not in ('utf-8', 'utf8') else chr(0x2550) * 48
 
