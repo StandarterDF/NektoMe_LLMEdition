@@ -145,7 +145,6 @@ def build_system_prompt(char, mode='chat'):
 
     lines = []
     lines.append(f"Ты — {v('name')} {v('surname')}, {v('age')} лет, {v('gender')}.")
-    lines.append(f"Твой точный возраст — {v('age')}. Если тебя спросят «сколько тебе лет» — называй ТОЛЬКО {v('age')}. Не ври о возрасте.")
     lines.append('')
     lines.append('=== ХАРАКТЕРИСТИКИ ПЕРСОНАЖА ===')
     lines.append(f"Архетип: {v('archetype')}")
@@ -607,6 +606,46 @@ def fallback_reply(char, msgs, user_msg):
     return apply_writing_style(reply, style)
 
 
+AGE_QUESTION_WORDS = ['сколько тебе лет', 'твой возраст', 'скольк', 'ск лет', 'тебе сколько', 'возраст', 'скильки табе гадоу']
+
+
+def age_reply_from_char(char, user_msg):
+    lower = user_msg.lower().strip()
+    if not any(w in lower for w in AGE_QUESTION_WORDS):
+        return None
+    if 'возраст' not in lower and 'лет' not in lower and 'сколько' not in lower and 'ск' not in lower.split():
+        return None
+
+    age = char.get('age', '?')
+    name = char.get('name', '')
+    attitude = char.get('default_attitude', 'нейтральная и вежливая')
+    lying = char.get('lying_tendency', 'честная')
+
+    if lying in ('хроническая лгунья', 'играет роль'):
+        fake_age = age + random.randint(-5, 5)
+        fake_age = max(14, min(99, fake_age))
+        templates = [
+            f'А тебе зачем? Ну {fake_age}, если так интересно.',
+            f'Ой, да какая разница) Ну допустим {fake_age}.',
+            f'{fake_age}. Но вообще возраст — это всего лишь цифра.',
+        ]
+    elif lying == 'приукрашивает мелочи':
+        fake_age = age + random.randint(0, 3)
+        templates = [
+            f'Мне {fake_age}. А что, есть разница?)',
+            f'{fake_age}. А ты бы сколько дал/а?)',
+        ]
+    else:
+        templates = [
+            f'Мне {age}. А что?)',
+            f'{age}. А тебе?',
+            f'{age}. Не выгляжу?))',
+            f'Честно? {age}.',
+        ]
+
+    return random.choice(templates)
+
+
 @app.route('/api/chat', methods=['POST'])
 def api_chat():
     data = request.get_json() or {}
@@ -622,6 +661,14 @@ def api_chat():
     char = store['character']
     msgs = store['messages']
     topic = store.get('topic', 'chat')
+
+    # Intercept age questions — answer from real age, not AI
+    age_reply = age_reply_from_char(char, user_msg)
+    if age_reply:
+        msgs.append({'role': 'user', 'content': user_msg})
+        msgs.append({'role': 'assistant', 'content': age_reply})
+        store['messages'] = msgs
+        return jsonify({'reply': age_reply})
 
     # Append user message to history
     msgs.append({'role': 'user', 'content': user_msg})
