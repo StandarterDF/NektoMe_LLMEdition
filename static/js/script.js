@@ -1,13 +1,18 @@
 document.addEventListener('DOMContentLoaded', function () {
     var currentChar = null;
 
-    // Radio buttons
+    // Radio buttons — grouped by common parent container
     document.querySelectorAll('.btnradio').forEach(function (btn) {
         btn.addEventListener('click', function () {
-            var group = this.closest('.btn-group');
-            if (!group) return;
-            group.querySelectorAll('.btnradio').forEach(function (b) {
-                b.classList.remove('checked');
+            // Determine the radio group scope
+            var scope = this.closest('.topicRow, .threeBtns, .colorRow') || this.closest('.btn-group');
+            if (!scope) {
+                // Fallback: own age buttons are bare in .s-age
+                scope = this.closest('.s-age');
+                if (!scope) return;
+            }
+            scope.querySelectorAll('.btnradio').forEach(function (b) {
+                if (b !== btn) b.classList.remove('checked');
             });
             this.classList.add('checked');
         });
