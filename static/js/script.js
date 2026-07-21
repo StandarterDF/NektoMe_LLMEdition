@@ -98,12 +98,57 @@ document.addEventListener('DOMContentLoaded', function () {
     // Restore saved filters on load
     restoreFilters();
 
+    // Online counter — fetches from server, animates smoothly
+    var currentCount = 2000;
+    var targetCount = 2000;
+
+    function fetchOnlineTarget() {
+        fetch('/api/online')
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                targetCount = data.total;
+            })
+            .catch(function () {});
+    }
+
+    function animateOnline() {
+        var diff = targetCount - currentCount;
+        if (Math.abs(diff) < 0.5) {
+            currentCount = targetCount;
+        } else {
+            currentCount += diff * 0.05;
+        }
+        document.getElementById('onlineCount').textContent = Math.round(currentCount);
+        requestAnimationFrame(animateOnline);
+    }
+
+    var onlineInterval = setInterval(fetchOnlineTarget, 3000);
+
+    function stopOnlinePolling() {
+        clearInterval(onlineInterval);
+    }
+
+    function startOnlinePolling() {
+        clearInterval(onlineInterval);
+        fetchOnlineTarget();
+        onlineInterval = setInterval(fetchOnlineTarget, 3000);
+    }
+
+    fetchOnlineTarget();
+    animateOnline();
+
     function showStep(stepId) {
         document.querySelectorAll('.step_chatbox').forEach(function (s) {
             s.style.display = 'none';
+            s.classList.remove('visible');
         });
         var step = document.getElementById(stepId);
-        if (step) step.style.display = 'block';
+        if (step) {
+            step.style.display = '';
+            requestAnimationFrame(function () {
+                step.classList.add('visible');
+            });
+        }
     }
 
     function addMessage(text, type) {
@@ -128,8 +173,20 @@ document.addEventListener('DOMContentLoaded', function () {
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
+    function getSearchDelay() {
+        var hour = new Date().getHours();
+        if (hour >= 8 && hour < 24) {
+            return 300 + Math.random() * 1700;
+        }
+        return 500 + Math.random() * 4500;
+    }
+
+    var searchCancelled = false;
+
     // Search button
-    document.getElementById('searchCompanyBtn').addEventListener('click', function () {
+    function startSearch() {
+        searchCancelled = false;
+
         var topicBtn = document.querySelector('.topicRow .btnradio.checked');
         var topic = topicBtn ? topicBtn.getAttribute('data-topic') : 'chat';
         var isAdult = topic === 'flirt';
@@ -141,19 +198,9 @@ document.addEventListener('DOMContentLoaded', function () {
             header.classList.remove('adult_topic');
         }
 
-        // Switch to chat view immediately
-        showStep('chatStep');
         document.getElementById('headerChatMode').style.display = 'none';
-        document.getElementById('headerSearchMode').style.display = 'block';
-        document.getElementById('sendMessageBtn').disabled = true;
-        document.getElementById('talk_over').style.display = 'none';
-
-        var chatMessages = document.getElementById('chat_messages');
-        chatMessages.innerHTML = '';
-        chatMessages.innerHTML +=
-            '<div class="window_chat_dialog_write" id="typing_indicator" style="display:none;"><span>Собеседник печатает...</span></div>';
-
-        addMessage('Поиск собеседника...', 'nekto');
+        document.getElementById('headerSearchMode').style.display = 'none';
+        showStep('connectingStep');
 
         // Collect filters
         var partnerGenderBtn = document.querySelector('.wishSex .btnradio.checked');
@@ -169,6 +216,8 @@ document.addEventListener('DOMContentLoaded', function () {
             else if (age === 'mature') partnerAges.push('старше 36');
         });
 
+        var searchStart = Date.now();
+
         fetch('/api/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -180,28 +229,56 @@ document.addEventListener('DOMContentLoaded', function () {
         })
         .then(function (r) { return r.json(); })
         .then(function (char) {
+            if (searchCancelled) return;
             currentChar = char;
-            document.getElementById('sendMessageBtn').disabled = false;
-            document.getElementById('message_input').focus();
 
-            // Clear loading message and add welcome
-            chatMessages.innerHTML = '';
-            chatMessages.innerHTML +=
-                '<div class="window_chat_dialog_write" id="typing_indicator" style="display:none;"><span>Собеседник печатает...</span></div>';
+            var delay = getSearchDelay();
+            var elapsed = Date.now() - searchStart;
+            var wait = Math.max(0, delay - elapsed);
 
-            addMessage('Собеседник найден!', 'nekto');
-
-            // Send opener after brief delay
             setTimeout(function () {
+                if (searchCancelled) return;
+
+                // Switch to chat
+                showInput();
+                document.getElementById('chat_box').classList.add('chat-mode');
+                showStep('chatStep');
+                stopOnlinePolling();
+                document.getElementById('headerSearchMode').style.display = 'block';
+                document.getElementById('sendMessageBtn').disabled = false;
+                document.getElementById('message_input').focus();
+                document.getElementById('endChatBtn').style.display = '';
+
+                var chatMessages = document.getElementById('chat_messages');
+                chatMessages.innerHTML = '';
+
+                // Show opener after brief delay
                 var opener = char.chat_opener || 'Привет!';
-                addMessage(opener, 'nekto');
-            }, 700);
+                setTimeout(function () {
+                    if (!searchCancelled) addMessage(opener, 'nekto');
+                }, 300);
+            }, wait);
         })
         .catch(function () {
-            chatMessages.innerHTML = '';
-            addMessage('Ошибка поиска. Попробуйте снова.', 'nekto');
-            document.getElementById('sendMessageBtn').disabled = false;
+            if (searchCancelled) return;
+            showStep('searchStep');
+            document.getElementById('headerSearchMode').style.display = 'none';
+            document.getElementById('headerChatMode').style.display = 'block';
+            document.getElementById('endChatBtn').style.display = 'none';
+            startOnlinePolling();
         });
+    }
+
+    document.getElementById('searchCompanyBtn').addEventListener('click', startSearch);
+
+    // Cancel search
+    document.getElementById('cancelSearchBtn').addEventListener('click', function () {
+        searchCancelled = true;
+        document.getElementById('chat_box').classList.remove('chat-mode');
+        document.getElementById('headerSearchMode').style.display = 'none';
+        document.getElementById('headerChatMode').style.display = 'block';
+        showStep('searchStep');
+        startOnlinePolling();
     });
 
     // --- CHAT ---
@@ -268,18 +345,50 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
-    // Talk over buttons
-    function showSearchStep() {
-        document.getElementById('headerChatMode').style.display = 'block';
-        document.getElementById('headerSearchMode').style.display = 'none';
+    function showInput() {
         document.getElementById('talk_over').style.display = 'none';
-        showStep('searchStep');
+        document.getElementById('message_input').setAttribute('contenteditable', 'true');
+        document.getElementById('message_input').focus();
     }
 
-    document.getElementById('newChatBtn').addEventListener('click', function () {
-        // Trigger search with same params
-        document.getElementById('searchCompanyBtn').click();
+    function showTalkOver() {
+        document.getElementById('talk_over').style.display = '';
+        document.getElementById('message_input').setAttribute('contenteditable', 'false');
+        document.getElementById('message_input').blur();
+    }
+
+    // Talk over buttons
+    function showSearchStep() {
+        showInput();
+        document.getElementById('headerChatMode').style.display = 'block';
+        document.getElementById('headerSearchMode').style.display = 'none';
+        showStep('searchStep');
+        document.getElementById('chat_box').classList.remove('chat-mode');
+        startOnlinePolling();
+    }
+
+    // End chat modal
+    document.getElementById('endChatBtn').addEventListener('click', function () {
+        document.getElementById('endChatModal').style.display = 'flex';
     });
 
-    document.getElementById('changeParamsBtn').addEventListener('click', showSearchStep);
+    document.getElementById('modalEndYes').addEventListener('click', function () {
+        document.getElementById('endChatModal').style.display = 'none';
+        showTalkOver();
+        document.getElementById('sendMessageBtn').disabled = true;
+    });
+
+    document.getElementById('modalEndNo').addEventListener('click', function () {
+        document.getElementById('endChatModal').style.display = 'none';
+    });
+
+    document.getElementById('newChatBtn').addEventListener('click', function () {
+        showInput();
+        startSearch();
+    });
+
+    document.getElementById('changeParamsBtn').addEventListener('click', function () {
+        showInput();
+        showSearchStep();
+    });
 });

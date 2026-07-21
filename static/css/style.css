@@ -161,9 +161,57 @@ html, body {
     float: none !important;
     margin-left: auto !important;
     margin-right: auto !important;
+}
+
+.chat-box {
+    transition: height 0.3s ease;
+}
+
+.chat-box.chat-mode {
+    height: calc(100vh - 80px);
+}
+
+.chat-box.chat-mode .chat_step {
+    height: calc(100% - 46px);
+    position: relative;
+}
+
+.chat-box.chat-mode .chat_step::after {
+    display: none;
+}
+
+.chat-box.chat-mode .chat_step > [class*="col-"] {
+    position: static !important;
+    height: 100%;
+    padding: 0 !important;
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 60px);
+}
+
+.chat-box.chat-mode .window_chat_block {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 8px 20px 12px;
+    min-height: 0;
+}
+
+.chat-box.chat-mode .window_chat_message {
+    flex-shrink: 0;
+    position: relative;
+}
+
+.chat-box.chat-mode .window_chat_message .window_chat_dialog_write {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    right: 0;
+    z-index: 1;
+}
+
+@media (min-width: 1200px) {
+    .chat-box.chat-mode {
+        width: 83.33333333%;
+    }
 }
 
 .chat_container {
@@ -348,6 +396,31 @@ html, body {
     right: 10px;
     top: 50%;
     transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.end_chat_btn {
+    background: transparent;
+    border: 2px solid var(--night-button-change-params-color);
+    color: var(--night-button-change-params-color);
+    border-radius: 50px;
+    padding: 4px 14px;
+    font-size: 13px;
+    font-weight: bold;
+    cursor: pointer;
+    outline: none;
+    white-space: nowrap;
+}
+
+.end_chat_btn:hover {
+    opacity: 0.8;
+}
+
+body.light_theme .end_chat_btn {
+    border-color: var(--night-button-change-params-color);
+    color: var(--night-button-change-params-color);
 }
 
 .weight_txt {
@@ -550,14 +623,8 @@ html, body {
 @media (min-width: 1200px) {
     .col-lg-4 { width: 33.33333333%; float: left; }
     .col-lg-6 { width: 50%; float: left; }
-    .col-lg-8 { width: 66.66666667%; float: left; }
-    .col-lg-10 { width: 83.33333333%; float: left; }
     .col-lg-12 { width: 100%; float: left; }
-    .container { width: 1400px; }
-}
-
-@media (min-width: 992px) {
-    .col-md-10 { width: 83.33333333%; float: left; }
+    .container { width: 1170px; }
 }
 
 @media (min-width: 992px) and (max-width: 1199px) {
@@ -566,7 +633,7 @@ html, body {
 
 /* Chat window */
 .window_chat_block {
-    padding: 20px 8px 0 10px;
+    padding: 20px 8px 60px 10px;
     flex: 1;
     overflow-y: auto;
     background: var(--night-background-color);
@@ -577,9 +644,7 @@ html, body {
     text-align: center;
     color: var(--night-chat-message-time-color);
     font-style: italic;
-    position: relative;
-    padding-top: 2px;
-    margin-top: -22px;
+    padding: 2px 0 4px;
     background: var(--night-background-color);
     width: 100%;
 }
@@ -598,14 +663,14 @@ html, body {
     float: left;
     background: var(--night-chat-messages-nekto-background);
     border: 1px solid var(--night-chat-messages-nekto-border-color);
-    padding: 3px 10px;
+    padding: 5px 10px;
     border-radius: 7px;
     color: var(--night-chat-messages-nekto-color);
     max-width: 70%;
     word-wrap: break-word;
-    margin-left: 30px;
-    margin-top: 2.5px;
-    margin-bottom: 2.5px;
+    margin-left: 12px;
+    margin-top: 4px;
+    margin-bottom: 4px;
 }
 
 .mess_block.self .window_chat_dialog_text {
@@ -615,7 +680,7 @@ html, body {
     max-width: 82%;
     float: right;
     margin-left: 0;
-    margin-right: 8px;
+    margin-right: 12px;
 }
 
 .window_chat_dialog_time {
@@ -692,17 +757,24 @@ html, body {
 /* Message input */
 .window_chat_message {
     background: var(--night-chat-message-area-wrapper-background);
-    padding: 15px 15px 15px 30px;
+    padding: 8px 0;
+}
+
+.window_chat_message .row {
+    width: 96%;
+    margin: 0 auto !important;
     display: flex;
     align-items: center;
+    gap: 0;
 }
 
 .box_message.message_box_2 {
     border: 1px solid var(--night-chat-message-border-color) !important;
     background: var(--night-chat-message-area-background);
     border-radius: 50px;
-    min-height: 35px;
+    min-height: 37px;
     overflow: hidden;
+    box-sizing: border-box;
 }
 
 .emojionearea {
@@ -710,7 +782,6 @@ html, body {
     color: var(--night-chat-message-area-color);
     background: var(--night-chat-message-area-background);
     border: 1px solid transparent;
-    border-radius: 7px;
 }
 
 .box_message.message_box_2 .emojionearea {
@@ -720,12 +791,15 @@ html, body {
 .emojionearea .emojionearea-editor {
     color: var(--night-text-color);
     padding-left: 16px;
-    min-height: 35px;
+    min-height: 37px;
     outline: none;
     word-wrap: break-word;
     overflow-y: auto;
     padding: 6px 12px;
     cursor: text;
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
 }
 
 .emojionearea .emojionearea-editor:empty::before {
@@ -733,10 +807,27 @@ html, body {
     color: #6C7A87 !important;
 }
 
+.window_chat_message .col-xs-10 {
+    flex: 1;
+    min-width: 0;
+}
+
+.window_chat_message .col-xs-2 {
+    flex: none;
+    width: 45px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.window_chat_message .col-xs-10,
+.window_chat_message .col-xs-2 {
+    padding: 0;
+    float: none;
+}
+
 .send_btn_circle {
     display: flex;
-    float: right;
-    margin-left: 6px;
     border: 0;
     border-radius: 50%;
     width: 37px;
@@ -758,38 +849,156 @@ html, body {
 }
 
 .smile_panel_button_send {
-    float: right;
-    margin-top: 4px;
-    margin-right: 7px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* End chat modal */
+.modal_overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal_dialog {
+    background: var(--night-chat-messages-self-background);
+    border: 1px solid var(--night-chat-message-border-color);
+    border-radius: 10px;
+    padding: 24px 28px;
+    max-width: 320px;
+    width: 90%;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+
+.modal_body {
+    color: var(--night-text-color);
+    font-size: 15px;
+    text-align: center;
+    margin-bottom: 20px;
+    line-height: 1.4;
+}
+
+.modal_buttons {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+}
+
+.modal_btn {
+    padding: 8px 28px;
+    border-radius: 50px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    border: 2px solid;
+    outline: none;
+}
+
+.modal_btn_yes {
+    background: transparent;
+    border-color: var(--night-button-change-params-color);
+    color: var(--night-button-change-params-color);
+}
+
+.modal_btn_yes:hover {
+    opacity: 0.8;
+}
+
+.modal_btn_no {
+    background: transparent;
+    border-color: var(--night-chat-message-time-color);
+    color: var(--night-chat-message-time-color);
+}
+
+.modal_btn_no:hover {
+    opacity: 0.8;
+}
+
+body.light_theme .modal_dialog {
+    background: #fff;
+    border-color: #ddd;
+}
+
+body.light_theme .modal_body {
+    color: #333;
+}
+
+body.light_theme .modal_btn_no {
+    border-color: #999;
+    color: #666;
+}
+
+/* Connecting step */
+.spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid var(--night-chat-message-time-color);
+    border-top-color: var(--night-button-change-params-color);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 20px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.connecting_text {
+    font-size: 16px;
+    color: var(--night-text-color);
+    margin-bottom: 30px;
+}
+
+.cancel_search_btn {
+    background: transparent;
+    border: 2px solid #D76E00;
+    color: #D76E00;
+    border-radius: 50px;
+    padding: 8px 28px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    outline: none;
+}
+
+.cancel_search_btn:hover {
+    opacity: 0.8;
+}
+
+body.light_theme .connecting_text {
+    color: #333;
 }
 
 /* Talk over section */
 .talk_over {
-    margin-top: 5px;
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    right: 0;
     text-align: center;
-    background: var(--night-background-color);
-    padding: 20px;
-}
-
-.talk_over_text {
-    font-size: 13px;
-    font-weight: bold;
-    color: var(--night-text-color);
-}
-
-.talk_over_text span {
-    color: var(--night-complain-link, #5f7582);
-    cursor: pointer;
+    padding: 4px 20px 8px;
+    z-index: 1;
 }
 
 .talk_over_button_block {
-    margin-top: 10px;
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
 }
 
 .talk_over_button {
     display: inline-block;
-    background: var(--night-button-new-chat-color);
-    color: white;
+    background: transparent;
+    color: var(--night-button-new-chat-color);
     padding: 8px 20px;
     border-radius: 50px;
     margin: 8px 10px;
@@ -798,7 +1007,6 @@ html, body {
     font-weight: bolder;
     border: 2px solid var(--night-button-new-chat-color);
     cursor: pointer;
-    background: transparent;
 }
 
 .talk_over_button:hover {
@@ -808,6 +1016,34 @@ html, body {
 .talk_over_button.blue_bg {
     color: var(--night-button-change-params-color) !important;
     border-color: var(--night-button-change-params-color);
+}
+
+/* Animation */
+.step_chatbox {
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+#connectingStep {
+    height: calc(100vh - 160px);
+    display: flex;
+    align-items: center;
+}
+
+#connectingStep {
+    height: calc(100vh - 140px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.step_chatbox.chat_step {
+    opacity: 0;
+    transform: translateY(10px);
+}
+
+.step_chatbox.chat_step.visible {
+    opacity: 1;
+    transform: translateY(0);
 }
 
 /* Footer */
@@ -887,14 +1123,6 @@ body.light_theme .window_chat_dialog_time {
 
 body.light_theme .window_chat_dialog_write {
     background: #fff;
-}
-
-body.light_theme .talk_over {
-    background: #fff;
-}
-
-body.light_theme .talk_over_text {
-    color: #333;
 }
 
 body.light_theme .footer_search {

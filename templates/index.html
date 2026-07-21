@@ -21,7 +21,7 @@
     <div class="app" style="margin-top:50px;">
         <div class="container chat_container">
             <div class="row">
-                <div class="chat-box col-xs-12 col-sm-12 col-md-10 col-lg-8" id="chat_box">
+                <div class="chat-box col-xs-12 col-sm-12 col-md-8 col-lg-6" id="chat_box">
                     <div class="header_chat" id="headerChat">
                         <div class="st_chatbox" id="headerChatMode">
                             <div class="left_block_hc">
@@ -33,7 +33,9 @@
                             <div class="left_block_hc">
                                 <span class="weight_txt">Анонимный чат</span>
                             </div>
-                            <div class="right_block_hc main_chat_but" style="display:none;"></div>
+                            <div class="right_block_hc">
+                                <button id="endChatBtn" class="end_chat_btn" style="display:none;">Завершить чат</button>
+                            </div>
                         </div>
                     </div>
 
@@ -125,9 +127,18 @@
 
                             <div class="row">
                                 <div class="col-12 footer_search" style="font-size:16px;">
-                                    <div style="margin-top:4px;margin-bottom:10px;">Найди свою половинку!</div>
+                                    <div style="margin-top:4px;margin-bottom:10px;">Находятся в чате: <b id="onlineCount">0</b> пользователя</div>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- CONNECTING STEP -->
+                    <div class="row step_chatbox" id="connectingStep" style="display:none;">
+                        <div class="col-lg-12" style="text-align:center;">
+                            <div class="spinner"></div>
+                            <div class="connecting_text">Ищем собеседника...</div>
+                            <button class="cancel_search_btn" id="cancelSearchBtn">Отменить</button>
                         </div>
                     </div>
 
@@ -135,20 +146,26 @@
                     <div class="row step_chatbox chat_step" id="chatStep" style="display:none;">
                         <div class="col-lg-12" style="padding-left:0;padding-right:0;">
                             <div class="window_chat_block" id="chat_messages">
+                            </div>
+                            <div class="window_chat_message" id="chatInputArea">
                                 <div class="window_chat_dialog_write" id="typing_indicator" style="display:none;">
                                     <span>Собеседник печатает...</span>
                                 </div>
-                            </div>
-                            <div class="window_chat_message">
-                                <div class="row" style="margin:0;">
-                                    <div class="col-xs-10 crutch_col_11" style="padding-right:0;">
+                                <div class="talk_over" id="talk_over" style="display:none;">
+                                    <div class="talk_over_button_block">
+                                        <button class="talk_over_button" id="newChatBtn">Новый собеседник</button>
+                                        <button class="talk_over_button blue_bg" id="changeParamsBtn">Изменить параметры поиска</button>
+                                    </div>
+                                </div>
+                                <div class="row" id="inputRow" style="margin:0;">
+                                    <div class="col-xs-10 crutch_col_11">
                                         <div class="box_message message_box_2">
                                             <div class="emojionearea">
                                                 <div class="emojionearea-editor" id="message_input" contenteditable="true" placeholder="Введите сообщение..."></div>
                                             </div>
                                         </div>
                                     </div>
-                                    <div class="col-xs-2 col-sm-1" style="padding-left:0;text-align:center;">
+                                    <div class="col-xs-2 col-sm-1">
                                         <div class="smile_panel_button_send">
                                             <button id="sendMessageBtn" class="send_btn_circle" disabled>
                                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -160,13 +177,13 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="talk_over" id="talk_over" style="display:none;">
-                                <div class="talk_over_text">
-                                    Собеседник отключился. <span>Пожаловаться</span>
-                                </div>
-                                <div class="talk_over_button_block">
-                                    <button class="talk_over_button" id="newChatBtn">Новый собеседник</button>
-                                    <button class="talk_over_button blue_bg" id="changeParamsBtn">Изменить параметры поиска</button>
+                            <div class="modal_overlay" id="endChatModal" style="display:none;">
+                                <div class="modal_dialog">
+                                    <div class="modal_body">Вы действительно хотите завершить чат?</div>
+                                    <div class="modal_buttons">
+                                        <button class="modal_btn modal_btn_yes" id="modalEndYes">Завершить чат</button>
+                                        <button class="modal_btn modal_btn_no" id="modalEndNo">Отмена</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
