@@ -1,5 +1,69 @@
 document.addEventListener('DOMContentLoaded', function () {
     var currentChar = null;
+    var LS_KEY = 'nektome_filters';
+
+    function saveFilters() {
+        var data = {
+            topic: document.querySelector('.topicRow .btnradio.checked')?.getAttribute('data-topic') || 'chat',
+            ownGender: document.querySelector('.threeBtns:first-of-type .btnradio.checked')?.getAttribute('data-gender') || 'any',
+            partnerGender: document.querySelector('.wishSex .btnradio.checked')?.getAttribute('data-partner') || 'any',
+            ownAge: document.querySelector('#ownAgeGroup .btnradio.checked')?.getAttribute('data-age') || 'young',
+            partnerAges: Array.from(document.querySelectorAll('#partnerAgeGroup .btncheck.checked')).map(function (b) { return b.getAttribute('data-age'); }),
+            theme: document.querySelector('.colorRow .btnradio.checked')?.getAttribute('data-theme') || 'dark',
+        };
+        try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (e) {}
+    }
+
+    function restoreFilters() {
+        var raw;
+        try { raw = localStorage.getItem(LS_KEY); } catch (e) {}
+        if (!raw) return;
+        var data;
+        try { data = JSON.parse(raw); } catch (e) { return; }
+        if (!data) return;
+
+        // Topic
+        var topicBtn = document.querySelector('.topicRow button[data-topic="' + data.topic + '"]');
+        if (topicBtn) { topicBtn.classList.add('checked'); }
+
+        // Own gender
+        var ogBtn = document.querySelector('.threeBtns:first-of-type button[data-gender="' + data.ownGender + '"]');
+        if (ogBtn) { ogBtn.classList.add('checked'); }
+
+        // Partner gender
+        var pgBtn = document.querySelector('.wishSex button[data-partner="' + data.partnerGender + '"]');
+        if (pgBtn) { pgBtn.classList.add('checked'); }
+
+        // Own age
+        var oaBtn = document.querySelector('#ownAgeGroup button[data-age="' + data.ownAge + '"]');
+        if (oaBtn) { oaBtn.classList.add('checked'); }
+
+        // Partner ages
+        document.querySelectorAll('#partnerAgeGroup .btncheck').forEach(function (b) {
+            var age = b.getAttribute('data-age');
+            if (data.partnerAges && data.partnerAges.indexOf(age) !== -1) {
+                b.classList.add('checked');
+            } else {
+                b.classList.remove('checked');
+            }
+        });
+
+        // Theme
+        var themeBtn = document.querySelector('.colorRow button[data-theme="' + data.theme + '"]');
+        if (themeBtn) { themeBtn.classList.add('checked'); }
+        applyTheme(data.theme);
+    }
+
+    function applyTheme(theme) {
+        var body = document.body;
+        if (theme === 'light') {
+            body.classList.remove('night_theme');
+            body.classList.add('light_theme');
+        } else {
+            body.classList.remove('light_theme');
+            body.classList.add('night_theme');
+        }
+    }
 
     // Radio buttons — grouped by common parent container
     document.querySelectorAll('.btnradio').forEach(function (btn) {
@@ -7,14 +71,14 @@ document.addEventListener('DOMContentLoaded', function () {
             // Determine the radio group scope
             var scope = this.closest('.topicRow, .threeBtns, .colorRow') || this.closest('.btn-group');
             if (!scope) {
-                // Fallback: own age buttons are bare in .s-age
-                scope = this.closest('.s-age');
-                if (!scope) return;
+                scope = document.getElementById('ownAgeGroup');
+                if (!scope || !scope.contains(this)) return;
             }
             scope.querySelectorAll('.btnradio').forEach(function (b) {
                 if (b !== btn) b.classList.remove('checked');
             });
             this.classList.add('checked');
+            saveFilters();
         });
     });
 
@@ -22,8 +86,12 @@ document.addEventListener('DOMContentLoaded', function () {
     document.querySelectorAll('.btncheck').forEach(function (btn) {
         btn.addEventListener('click', function () {
             this.classList.toggle('checked');
+            saveFilters();
         });
     });
+
+    // Restore saved filters on load
+    restoreFilters();
 
     function showStep(stepId) {
         document.querySelectorAll('.step_chatbox').forEach(function (s) {
@@ -86,7 +154,7 @@ document.addEventListener('DOMContentLoaded', function () {
         var partnerGenderBtn = document.querySelector('.wishSex .btnradio.checked');
         var partnerGender = partnerGenderBtn ? partnerGenderBtn.getAttribute('data-partner') : 'any';
 
-        var ageChecks = document.querySelectorAll('.s-age .btncheck.checked');
+        var ageChecks = document.querySelectorAll('#partnerAgeGroup .btncheck.checked');
         var partnerAges = [];
         ageChecks.forEach(function (b) {
             var age = b.getAttribute('data-age');
@@ -191,14 +259,8 @@ document.addEventListener('DOMContentLoaded', function () {
     document.querySelectorAll('.colorRow .btnradio').forEach(function (btn) {
         btn.addEventListener('click', function () {
             var theme = this.getAttribute('data-theme');
-            var body = document.body;
-            if (theme === 'light') {
-                body.classList.remove('night_theme');
-                body.classList.add('light_theme');
-            } else {
-                body.classList.remove('light_theme');
-                body.classList.add('night_theme');
-            }
+            applyTheme(theme);
+            saveFilters();
         });
     });
 
