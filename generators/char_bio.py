@@ -1,12 +1,19 @@
 import random
 
 
-def generate_backstory(archetype_data, age_group_name, age, gender, extra_fragments=None):
-    fragments = list(archetype_data['backstory'])
-    if extra_fragments:
-        fragments.extend(extra_fragments)
+def generate_backstory(archetype_data, age_group_name, age, gender, extra_fragments=None, must_include=0):
+    # Build combined pool: trauma lines first, then archetype backstory, then extra
+    archetype_frags = list(archetype_data['backstory'])
+    extra = list(extra_fragments) if extra_fragments else []
+    fragments = extra + archetype_frags
 
-    selected = random.sample(fragments, min(random.randint(2, 3), len(fragments)))
+    # Always pick must_include from the front (trauma lines), then random from the rest
+    must_pick = fragments[:must_include] if must_include > 0 else []
+    rest = fragments[must_include:]
+    k = random.randint(2, 3)
+    if k > len(rest):
+        k = len(rest)
+    selected = must_pick + random.sample(rest, k) if rest else must_pick
 
     connectors = [
         'В детстве', 'Когда она была маленькой', 'С ранних лет',

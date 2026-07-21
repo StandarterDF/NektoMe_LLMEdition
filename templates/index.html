@@ -102,6 +102,21 @@
                                 </div>
                             </div>
 
+                            <div class="row colorRow">
+                                <div class="col-xs-6 col-sm-6 col-md-6 col-lg-6">
+                                    <label class="lb_search">Цветовая схема:</label>
+                                    <div class="btn-group">
+                                        <button class="btn btnradio btn-default" data-theme="light">Светлая</button>
+                                    </div>
+                                </div>
+                                <div class="col-xs-6 col-sm-6 col-md-6 col-lg-6">
+                                    <label class="lb_search">&nbsp;</label>
+                                    <div class="btn-group">
+                                        <button class="btn btnradio btn-default checked" data-theme="dark">Тёмная</button>
+                                    </div>
+                                </div>
+                            </div>
+
                             <div class="row search_btn_row" style="text-align:center;">
                                 <div class="col-lg-12" style="padding-top:25px;">
                                     <button id="searchCompanyBtn" class="btn btn-lg btn-my2">Начать поиск</button>
@@ -112,51 +127,6 @@
                                 <div class="col-12 footer_search" style="font-size:16px;">
                                     <div style="margin-top:4px;margin-bottom:10px;">Найди свою половинку!</div>
                                 </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- CHARACTER CARD STEP -->
-                    <div class="row step_chatbox char_step" id="charCardStep" style="display:none;">
-                        <div class="col-lg-12" style="padding:15px;">
-                            <div class="char-card-header" style="text-align:center;margin-bottom:15px;">
-                                <div class="char-avatar" id="charAvatar" style="width:80px;height:80px;border-radius:50%;background:#3c6286;margin:0 auto 10px;display:flex;align-items:center;justify-content:center;font-size:32px;color:white;font-weight:bold;"></div>
-                                <h2 style="margin:0;font-size:20px;color:var(--night-text-color);" id="charNameTitle"></h2>
-                                <div style="font-size:13px;color:var(--night-chat-message-time-color);" id="charSubtitle"></div>
-                            </div>
-
-                            <div class="char-tags" id="charTags" style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-bottom:15px;"></div>
-
-                            <div class="char-sections" id="charSections">
-                                <div class="char-section">
-                                    <div class="char-section-title" onclick="toggleSection(this)">📖 О себе <span class="toggle-arrow">▼</span></div>
-                                    <div class="char-section-body"><div id="charAbout"></div></div>
-                                </div>
-                                <div class="char-section">
-                                    <div class="char-section-title" onclick="toggleSection(this)">👤 Внешность <span class="toggle-arrow">▼</span></div>
-                                    <div class="char-section-body"><div id="charAppearance"></div></div>
-                                </div>
-                                <div class="char-section">
-                                    <div class="char-section-title" onclick="toggleSection(this)">🧠 Психология <span class="toggle-arrow">▼</span></div>
-                                    <div class="char-section-body"><div id="charPsychology"></div></div>
-                                </div>
-                                <div class="char-section">
-                                    <div class="char-section-title" onclick="toggleSection(this)">🎭 Характер <span class="toggle-arrow">▼</span></div>
-                                    <div class="char-section-body"><div id="charPersonality"></div></div>
-                                </div>
-                                <div class="char-section">
-                                    <div class="char-section-title" onclick="toggleSection(this)">💭 Интересы <span class="toggle-arrow">▼</span></div>
-                                    <div class="char-section-body"><div id="charInterests"></div></div>
-                                </div>
-                                <div class="char-section">
-                                    <div class="char-section-title" onclick="toggleSection(this)">📜 Предыстория <span class="toggle-arrow">▼</span></div>
-                                    <div class="char-section-body"><div id="charBackstory"></div></div>
-                                </div>
-                            </div>
-
-                            <div style="text-align:center;margin-top:15px;">
-                                <button id="charStartChatBtn" class="btn btn-lg btn-my2" style="width:80%;">Начать общение</button>
-                                <button id="charRegenerateBtn" class="btn btn-lg" style="width:80%;margin-top:8px;background:transparent;border:2px solid var(--night-button-change-params-color);color:var(--night-button-change-params-color);border-radius:50px;font-weight:bold;cursor:pointer;padding:10px 16px;">Новый собеседник</button>
                             </div>
                         </div>
                     </div>
@@ -207,6 +177,6 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/script.js') }}?v=2"></script>
 </body>
 </html>

@@ -628,11 +628,13 @@ def generate(seed=None, gender=None, age_group=None):
         'травма красоты': ['с детства её оценивали только по внешности — люди не видели в ней личность'],
         'отвержение внешности': ['близкие высмеивали её фигуру, и с тех пор она ненавидит своё тело'],
     }
-    trauma_line = trauma_backstory_lines.get(trauma_name, '')
-    if trauma_line:
-        # Inject trauma line directly into the start of the backstory
-        extra_backstory = [trauma_line] + extra_backstory
-    backstory = generate_backstory(archetype_data, age_group, age, gender, extra_backstory)
+    trauma_frags = trauma_backstory_lines.get(trauma_name, [])
+    if trauma_frags:
+        # Force trauma fragments to always appear by injecting them directly
+        extra_backstory = list(trauma_frags) + extra_backstory
+    # Use guaranteed count that includes trauma frags
+    must_include = len(trauma_frags)
+    backstory = generate_backstory(archetype_data, age_group, age, gender, extra_backstory, must_include=must_include)
 
     # --- Dynamic spice blocks (3-5 случайных деталей на персонажа) ---
     spice_slots = [
