@@ -7,6 +7,7 @@ import logging
 import threading
 import math
 import time
+from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 from generators.char_generator import generate as gen_char
 
@@ -427,6 +428,11 @@ def api_generate():
     token = str(uuid.uuid4())
     opener = char_data.get('chat_opener', '')
     initial_msgs = []
+    # Send current time once so AI knows it's night/day
+    now = datetime.now()
+    hour = now.hour
+    time_label = 'ночь' if 0 <= hour < 6 else 'утро' if 6 <= hour < 12 else 'день' if 12 <= hour < 18 else 'вечер'
+    initial_msgs.append({'role': 'user', 'content': f'[Сейчас {time_label}, моё время — {hour:02d}:{now.minute:02d}]'})
     if opener:
         initial_msgs.append({'role': 'assistant', 'content': opener})
     char_store[token] = {'character': char_data, 'messages': initial_msgs, 'topic': topic}
