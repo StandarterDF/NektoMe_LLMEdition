@@ -4,17 +4,31 @@ from generators.char_model import (
     Character, weighted_choice, weighted_sample, pick_from_pool,
     random_date, zodiac_sign,
 )
+from datetime import datetime, timedelta
 from generators.char_data import (
     male_names, female_names, male_surnames, female_surnames, cities,
     eye_colors, hair_colors, hair_lengths, body_types, skin_tones,
     positive_traits, negative_traits, hobbies_male, hobbies_female,
     profession_groups, profession_education_map, favorite_colors_pool,
-    favorite_foods_pool, favorite_drinks_pool, favorite_music_pool,
+    favorite_drinks_pool, favorite_music_pool,
     movie_genres_pool, book_genres_pool, fetish_categories, fetishes_pool,
     clothing_styles_pool, habits_pool, fears_pool, dreams_pool,
     relationship_values_pool, education_levels, languages_pool,
     relationship_statuses,
     hair_styles, movie_examples, book_examples, music_examples, trauma_data,
+    housing_pool, financial_habits_pool, eating_habits_pool,
+    pets_pool, red_flags_pool, green_flags_pool,
+    cryptonite_pool, useless_talents_pool, body_language_tells_pool,
+    humor_styles_pool, biggest_lies_pool, anger_triggers_pool,
+    enemies_pool, sleep_types_pool, personal_scents_pool, health_issues_pool,
+    supernatural_beliefs_pool,
+    writing_styles, rp_ability_profiles,
+    entry_contexts, current_situations_pool, current_moods_pool,
+    hidden_motives_pool, chat_openers_pool, skip_factors_pool,
+    harassment_reactions_pool, fav_topics_pool, taboo_topics_pool,
+    lying_tendencies, oversharing_descriptions,
+    foods_by_cost, wealth_to_food_cost,
+    default_attitudes_pool, paradoxes_pool,
 )
 from generators.char_profiles import (
     temperaments, archetypes, mbti_profiles, archetype_mbti_compat,
@@ -49,10 +63,11 @@ def generate(seed=None, gender=None, age_group=None):
 
     age_group_info = age_groups[age_group]
     min_age, max_age = age_group_info['min'], age_group_info['max']
-    age = random.randint(min_age, max_age)
     age_profile = age_group_profiles[age_group]
 
-    birth_date = random_date(2026 - max_age - 1, 2026 - min_age)
+    age = random.randint(min_age, max_age)
+    birth_year = 2026 - age
+    birth_date = datetime(birth_year, 1, 1) + timedelta(days=random.randint(0, 364))
     zodiac = zodiac_sign(birth_date.day, birth_date.month)
 
     # --- Name (weighted) ---
@@ -71,10 +86,17 @@ def generate(seed=None, gender=None, age_group=None):
     )
     temp_traits = temperaments[temp_name]
 
-    # --- Archetype ---
+    # --- Archetype (weighted by temperament compatibility) ---
+    archetype_temp_compat = {
+        'Сангвиник': {'Невинный': 3, 'Искатель': 3, 'Любовник': 3, 'Герой': 1, 'Сирота': 1, 'Бунтарь': 2, 'Творец': 3, 'Правитель': 2, 'Мудрец': 1, 'Воин': 2, 'Маг': 2, 'Шут': 3},
+        'Холерик':   {'Невинный': 0, 'Искатель': 2, 'Любовник': 2, 'Герой': 3, 'Сирота': 0, 'Бунтарь': 3, 'Творец': 1, 'Правитель': 3, 'Мудрец': 0, 'Воин': 3, 'Маг': 2, 'Шут': 2},
+        'Флегматик': {'Невинный': 3, 'Искатель': 2, 'Любовник': 1, 'Герой': 1, 'Сирота': 3, 'Бунтарь': 0, 'Творец': 2, 'Правитель': 1, 'Мудрец': 3, 'Воин': 1, 'Маг': 1, 'Шут': 1},
+        'Меланхолик':{'Невинный': 1, 'Искатель': 3, 'Любовник': 2, 'Герой': 1, 'Сирота': 2, 'Бунтарь': 1, 'Творец': 3, 'Правитель': 0, 'Мудрец': 2, 'Воин': 1, 'Маг': 2, 'Шут': 0},
+    }
+    compat_weights = archetype_temp_compat.get(temp_name, {k: 1 for k in archetypes})
     archetype_name = weighted_choice(
         list(archetypes.keys()),
-        [1] * 12,
+        [compat_weights.get(k, 1) for k in archetypes],
     )
     archetype_data = archetypes[archetype_name]
     archetype_desire = archetype_data['desire']
@@ -82,10 +104,17 @@ def generate(seed=None, gender=None, age_group=None):
     archetype_fear = archetype_data['fear']
     archetype_talent = archetype_data['talent']
 
-    # --- Social alignment ---
+    # --- Social alignment (weighted by temperament) ---
+    temp_to_social = {
+        'Сангвиник': {'Экстраверт': 65, 'Интроверт': 0, 'Амбиверт': 35},
+        'Холерик':   {'Экстраверт': 60, 'Интроверт': 0, 'Амбиверт': 40},
+        'Флегматик': {'Экстраверт': 0, 'Интроверт': 65, 'Амбиверт': 35},
+        'Меланхолик':{'Экстраверт': 0, 'Интроверт': 55, 'Амбиверт': 45},
+    }
+    social_weights_config = temp_to_social.get(temp_name, {'Экстраверт': 35, 'Интроверт': 40, 'Амбиверт': 25})
     social = weighted_choice(
         social_alignments,
-        [35, 40, 25],
+        [social_weights_config[s['name']] for s in social_alignments],
     )
     social_traits = social['traits']
 
@@ -132,6 +161,11 @@ def generate(seed=None, gender=None, age_group=None):
         compat_weight = archetype_role_compat.get(role_group, 1) if role_group else 1
         mbti_weights[mbti_key] = compat_weight * 3
 
+    if social['name'] == 'Интроверт':
+        mbti_weights = {k: v for k, v in mbti_weights.items() if k.startswith('I')}
+    elif social['name'] == 'Экстраверт':
+        mbti_weights = {k: v for k, v in mbti_weights.items() if k.startswith('E')}
+
     mbti_code = weighted_choice(list(mbti_weights.keys()), list(mbti_weights.values()))
     mbti_name = mbti_profiles[mbti_code]['name']
     mbti_traits = mbti_profiles[mbti_code]['traits']
@@ -146,30 +180,7 @@ def generate(seed=None, gender=None, age_group=None):
     # Normalized profile for weighted picks
     profile_normalized = {k: max(0.01, v + 1.0) for k, v in profile.items()}
 
-    # --- Appearance ---
-    eye_color = random.choice(eye_colors)
-    hair_color = random.choice(hair_colors)
-    hair_length = random.choice(hair_lengths)
-    body_type = weighted_choice([b[0] for b in body_types], [b[1] for b in body_types])
-    if body_type in ('мускулистое', 'атлетичное'):
-        gym_freqs = ['три раза в неделю', 'через день', 'каждый день', 'по утрам']
-        gym_habit = f'Регулярно ходит в спортзал ({random.choice(gym_freqs)})'
-    elif body_type == 'коренастое':
-        gym_habit = 'Занимается тяжёлой физической работой'
-    elif body_type in ('стройное', 'изящное'):
-        gym_habit = random.choice(['Занимается йогой или пилатесом', 'Много гуляет пешком, не любит спортзалы'])
-    else:
-        gym_habit = random.choice(['Не интересуется фитнесом', 'Иногда гуляет в парке', 'Ведёт малоподвижный образ жизни'])
-    skin_tone = random.choice(skin_tones)
-    distinctive_features = random.sample([
-        'родинка над губой', 'веснушки', 'шрам на брови', 'родинка на щеке',
-        'асимметричная улыбка', 'ямочки на щеках', 'пирсинг в носу',
-        'шрам на подбородке', 'родинка на шее', 'веснушки на носу',
-        'татуировка на запястье', 'седые пряди', 'шрам на руке',
-        'родимое пятно', 'пухлые губы', 'густые брови', 'веснушки',
-    ], random.randint(0, 2))
-
-    # --- Body size & beauty (affect personality + backstory) ---
+    # --- Body size & beauty first (affect personality + backstory) ---
     body_size_key = weighted_choice(
         list(body_sizes.keys()),
         [body_sizes[k]['prob'] for k in body_sizes],
@@ -195,11 +206,47 @@ def generate(seed=None, gender=None, age_group=None):
         profile[k] = max(-1.0, min(1.0, profile[k]))
     profile_normalized = {k: max(0.01, v + 1.0) for k, v in profile.items()}
 
+    # --- Height & Appearance ---
+    height_cm = random.randint(155, 180) if gender == 'female' else random.randint(170, 195)
+    height_str = f"{height_cm} см"
+
+    # BMI-based body type filtering
+    if weight_range:
+        w_parts = weight_range.split('-')
+        weight_mid = (float(w_parts[0]) + float(w_parts[1])) / 2
+    else:
+        weight_mid = 60
+    bmi = weight_mid / ((height_cm / 100) ** 2)
+
+    body_type = _pick_body_type_by_bmi(bmi)
+
+    eye_color = random.choice(eye_colors)
+    hair_color = random.choice(hair_colors)
+    hair_length = random.choice(hair_lengths)
+    if body_type in ('мускулистое', 'атлетичное'):
+        gym_freqs = ['три раза в неделю', 'через день', 'каждый день', 'по утрам']
+        gym_habit = f'Регулярно ходит в спортзал ({random.choice(gym_freqs)})'
+    elif body_type == 'коренастое':
+        gym_habit = 'Занимается тяжёлой физической работой'
+    elif body_type in ('стройное', 'изящное'):
+        gym_habit = random.choice(['Занимается йогой или пилатесом', 'Много гуляет пешком, не любит спортзалы'])
+    else:
+        gym_habit = random.choice(['Не интересуется фитнесом', 'Иногда гуляет в парке', 'Ведёт малоподвижный образ жизни'])
+    skin_tone = random.choice(skin_tones)
+    distinctive_features = random.sample([
+        'родинка над губой', 'веснушки', 'шрам на брови', 'родинка на щеке',
+        'асимметричная улыбка', 'ямочки на щеках', 'пирсинг в носу',
+        'шрам на подбородке', 'родинка на шее', 'веснушки на носу',
+        'татуировка на запястье', 'седые пряди', 'шрам на руке',
+        'родимое пятно', 'пухлые губы', 'густые брови', 'веснушки',
+    ], random.randint(0, 2))
+
     clothing_style = pick_from_pool(clothing_styles_pool, profile_normalized, 1, 1)[0]
 
     extra_backstory = []
     extra_backstory.extend(body_size_data['backstory'])
     extra_backstory.extend(beauty_data['backstory'])
+    extra_backstory = _resolve_backstory_conflicts(body_size_key, beauty, extra_backstory)
 
     hair_style_data = hair_styles.get(hair_length)
     if hair_style_data:
@@ -328,7 +375,9 @@ def generate(seed=None, gender=None, age_group=None):
 
     # --- Favorites ---
     favorite_colors = pick_from_pool(favorite_colors_pool, profile_normalized, 2, 3)
-    favorite_foods = random.sample(favorite_foods_pool, min(random.randint(3, 5), len(favorite_foods_pool)))
+    food_cost_tier = wealth_to_food_cost.get(wealth_level, 'средняя')
+    food_pool_for_wealth = foods_by_cost.get(food_cost_tier, foods_by_cost['средняя'])
+    favorite_foods = random.sample(food_pool_for_wealth, min(random.randint(3, 5), len(food_pool_for_wealth)))
     favorite_drinks = random.sample(favorite_drinks_pool, min(random.randint(2, 3), len(favorite_drinks_pool)))
 
     # Music with age boost
@@ -555,21 +604,232 @@ def generate(seed=None, gender=None, age_group=None):
     else:
         astrology_belief = 'не верит в астрологию'
 
-    # --- Backstory ---
-    backstory = generate_backstory(archetype_data, age_group, age, gender, extra_backstory)
-
-    # --- Psychological trauma ---
+    # --- Psychological trauma (before backstory, so backstory can reference it) ---
     trauma = random.choice(trauma_data)
     trauma_name = trauma['name']
     trauma_consequence = random.choice(trauma['consequence'])
     trauma_defense = random.choice(trauma['defense'])
     trauma_belief = trauma['belief']
 
+    # --- Backstory (with trauma-aligned fragment) ---
+    trauma_backstory_lines = {
+        'предательство близкого': ['когда-то самый близкий человек предал её доверие, и с тех пор она никому не верит до конца'],
+        'эмоциональное отвержение': ['родители были холодны и никогда не говорили, что любят её'],
+        'физическое насилие': ['в детстве она регулярно сталкивалась с жестокостью дома'],
+        'буллинг': ['в школе её травили и дразнили за внешность'],
+        'потеря близкого': ['она потеряла самого родного человека и до сих пор не может это принять'],
+        'гиперопека': ['родители контролировали каждый её шаг, не давая права на ошибку'],
+        'измена': ['она пережила предательство от того, кого любила больше всего'],
+        'бедность в детстве': ['семья жила в постоянной нехватке денег — она помнит, как экономили на еде'],
+        'воспитание с установками': ['ей с детства внушали, что она должна быть лучше всех, чтобы её любили'],
+        'одиночество': ['после переезда она осталась совсем одна и долго не могла найти друзей'],
+        'развод родителей': ['когда родители развелись, она оказалась между ними и не знала, на чью сторону встать'],
+        'сексуальное насилие': ['в её жизни был эпизод, о котором она старается не вспоминать'],
+        'травма красоты': ['с детства её оценивали только по внешности — люди не видели в ней личность'],
+        'отвержение внешности': ['близкие высмеивали её фигуру, и с тех пор она ненавидит своё тело'],
+    }
+    trauma_line = trauma_backstory_lines.get(trauma_name, '')
+    if trauma_line:
+        # Inject trauma line directly into the start of the backstory
+        extra_backstory = [trauma_line] + extra_backstory
+    backstory = generate_backstory(archetype_data, age_group, age, gender, extra_backstory)
+
+    # --- Dynamic spice blocks (3-5 случайных деталей на персонажа) ---
+    spice_slots = [
+        'housing', 'financial_habit', 'eating_habit',
+        'pet', 'red_flags', 'green_flags',
+        'cryptonite', 'useless_talent', 'body_language_tell',
+        'humor_style', 'biggest_lie', 'anger_trigger',
+        'enemy', 'sleep_type', 'personal_scent', 'health_issue',
+        'supernatural_belief',
+    ]
+    picked_spices = random.sample(spice_slots, min(random.randint(3, 5), len(spice_slots)))
+
+
+    poverty_traumas = ['бедность в детстве', 'потеря состояния']
+    if trauma_name in poverty_traumas and 'financial_habit' not in picked_spices:
+        picked_spices.append('financial_habit')
+
+    spice_values: dict = {k: '' for k in spice_slots}
+    spice_values['red_flags'] = []
+    spice_values['green_flags'] = []
+
+    poverty_habits = [
+        'скрупулёзно вносит все траты в приложение',
+        'считает каждую копейку',
+        'экономит на всём, даже на еде',
+    ]
+    low_income_meal_habits = [
+        'питается лапшой быстрого приготовления',
+        'готовит на неделю вперёд контейнерами',
+        'перекусывает на бегу — нормального обеда нет',
+        'едет в другой район за самыми дешёвыми продуктами',
+    ]
+
+    def pick(flag_pool, n=1):
+        if isinstance(flag_pool, list):
+            return random.choice(flag_pool) if n == 1 else random.sample(flag_pool, min(n, len(flag_pool)))
+        return ''
+
+    for s in picked_spices:
+        if s == 'housing':
+            spice_values[s] = pick(housing_pool)
+        elif s == 'financial_habit':
+            if trauma_name in poverty_traumas:
+                spice_values[s] = random.choice(poverty_habits)
+            else:
+                spice_values[s] = pick(financial_habits_pool)
+        elif s == 'eating_habit':
+            wealth_rank = ['очень низкий', 'низкий', 'средний', 'выше среднего', 'высокий', 'очень высокий'].index(wealth_level)
+            if wealth_rank <= 1:
+                spice_values[s] = random.choice(low_income_meal_habits)
+            else:
+                spice_values[s] = pick(eating_habits_pool)
+        elif s == 'pet':
+            spice_values[s] = pick(pets_pool)
+        elif s == 'red_flags':
+            spice_values[s] = pick(red_flags_pool, 2)
+        elif s == 'green_flags':
+            spice_values[s] = pick(green_flags_pool, 2)
+        elif s == 'cryptonite':
+            spice_values[s] = pick(cryptonite_pool)
+        elif s == 'useless_talent':
+            spice_values[s] = pick(useless_talents_pool)
+        elif s == 'body_language_tell':
+            spice_values[s] = pick(body_language_tells_pool)
+        elif s == 'humor_style':
+            spice_values[s] = pick(humor_styles_pool)
+        elif s == 'biggest_lie':
+            spice_values[s] = pick(biggest_lies_pool)
+        elif s == 'anger_trigger':
+            spice_values[s] = pick(anger_triggers_pool)
+        elif s == 'enemy':
+            spice_values[s] = pick(enemies_pool)
+        elif s == 'sleep_type':
+            spice_values[s] = pick(sleep_types_pool)
+        elif s == 'personal_scent':
+            spice_values[s] = pick(personal_scents_pool)
+        elif s == 'health_issue':
+            spice_values[s] = pick(health_issues_pool)
+        elif s == 'supernatural_belief':
+            spice_values[s] = pick(supernatural_beliefs_pool)
+
+    # --- Resolve sleep type vs habits conflicts ---
+    sleep_type_val = spice_values.get('sleep_type', '')
+    is_lark = ('жаворонок' in sleep_type_val or '6 утра' in sleep_type_val)
+    if is_lark and 'любит поспать 9' in sleep_type_val:
+        pass  # contradicting lark+long sleep is allowed (they just can't also wake at 5)
+    if is_lark:
+        habits = [h for h in habits if 'говорить во сне' not in h]
+    if 'сова' in sleep_type_val or '2 ночи' in sleep_type_val:
+        habits = [h for h in habits if h != 'просыпаться в 5 утра']
+    if 'любит поспать 9' in sleep_type_val or 'хронически не высыпается' in sleep_type_val:
+        habits = [h for h in habits if h != 'просыпаться в 5 утра']
+
+    # --- Chat communication module (стиль письма, RP, мотивация входа) ---
+    writing_style = random.choice(writing_styles)['name']
+    rp_level = weighted_choice(
+        [r['level'] for r in rp_ability_profiles],
+        [40, 30, 20, 10],
+    )
+    rp_ability = rp_level in ('активный рп', 'профи рп')
+    entry_context = random.choice(entry_contexts)
+    # Age-filter situations
+    if age_group == 'teen':
+        teen_ok = [s for s in current_situations_pool if not any(
+            kw in s for kw in ['за рулём', 'стоит в пробке', 'на работе', 'лейт-шоу', 'деловой ужин', 'бар', 'вино', 'кофе в круглосуточной кофейне']
+        )]
+        current_situation = random.choice(teen_ok if teen_ok else current_situations_pool)
+    else:
+        current_situation = random.choice(current_situations_pool)
+    mood_weights = {
+        'игривое': 10, 'философское': 10, 'агрессивное': 5, 'сонное': 12,
+        'пьяное': 5, 'грустное': 10, 'тревожное': 8, 'эйфорическое': 4,
+        'ноющее («хочется поныть»)': 9, 'влюблённое': 4, 'злое': 5,
+        'расслабленное': 8, 'апатичное': 6, 'весёлое': 10,
+        'любопытное': 12, 'саркастичное': 7, 'благодарное': 3, 'одинокое': 8,
+    }
+    current_mood = weighted_choice(
+        list(mood_weights.keys()),
+        list(mood_weights.values()),
+    )
+    hidden_motive = random.choice(hidden_motives_pool)
+    chat_opener = random.choice(chat_openers_pool)
+    skip_count = random.randint(1, 3)
+    skip_factors = random.sample(skip_factors_pool, min(skip_count, len(skip_factors_pool)))
+    if hidden_motive in ('найти флирт / вирт',) or chat_motivation == 'поиск пошлостей':
+        skip_factors = [sf for sf in skip_factors if 'пошлост' not in sf and 'флиртует' not in sf]
+    passive_reactions = ['молча нажимает «Next»', 'игнорирует и просто скипает', 'пишет «окей, было весело, пока» и отключается']
+    aggressive_reactions = ['покрывает матом и блокирует', 'жестко троллит перед отключением']
+    if trauma_defense in ('избегает конфликтов', 'замалчивает обиды', 'сбегает от ответственности', 'уходит от разговора'):
+        harassment_reaction = random.choice(passive_reactions)
+    elif trauma_defense in ('высмеивает других первой', 'иронизирует над чувствами', 'носит маску уверенности'):
+        harassment_reaction = random.choice(aggressive_reactions)
+    else:
+        harassment_reaction = random.choice(harassment_reactions_pool)
+    fav_topics = random.sample(fav_topics_pool, min(random.randint(2, 4), len(fav_topics_pool)))
+    taboo_topics = random.sample(taboo_topics_pool, min(random.randint(2, 3), len(taboo_topics_pool)))
+    # Resolve goal/taboo conflicts
+    if hidden_motive in ('найти флирт / вирт',) or chat_motivation == 'поиск пошлостей':
+        taboo_topics = [t for t in taboo_topics if t != 'секс и интимные подробности']
+    if hidden_motive in ('выговориться про бывшего/бывшую', 'пожаловаться на жизнь'):
+        taboo_topics = [t for t in taboo_topics if t != 'прошлые отношения']
+    lying_tendency = weighted_choice(
+        [l['level'] for l in lying_tendencies],
+        [30, 25, 20, 10, 15],
+    )
+    if lying_tendency == 'играет роль':
+        lying_tendency = f'играет роль: {_pick_lying_role()}'
+
+    # --- Oversharing level (1-10) ---
+    oversharing_base = profile_normalized.get('emotionality', 1.0) * 2.5
+    oversharing_base += profile_normalized.get('sociability', 1.0) * 2
+    oversharing_base -= profile_normalized.get('discipline', 1.0) * 0.8
+    oversharing_base += profile_normalized.get('anxious', 1.0) * 1.5
+    oversharing_base = max(1, min(10, round(oversharing_base)))
+    oversharing_level = oversharing_base
+
+    # Trauma reduces oversharing (closed traumas are not for strangers)
+    closed_traumas = ['предательство близкого', 'страх привязанности', 'измена',
+                      'сексуальное насилие', 'потеря близкого']
+    if trauma_name in closed_traumas:
+        oversharing_level = max(1, oversharing_level - 3)
+    open_traumas = ['буллинг', 'эмоциональное отвержение', 'гиперопека',
+                    'травма красоты', 'синдром самозванца']
+    if trauma_name in open_traumas:
+        oversharing_level = min(10, oversharing_level + 1)
+
+    if chat_motivation in ('выговориться', 'выговориться про бывшего'):
+        oversharing_level = min(10, oversharing_level + 3)
+    if hidden_motive in ('выговориться про бывшего/бывшую', 'пожаловаться на жизнь'):
+        oversharing_level = min(10, oversharing_level + 2)
+    if lying_tendency.startswith('честная') or lying_tendency.startswith('приукрашивает'):
+        oversharing_level = min(10, oversharing_level + 1)
+    if lying_tendency.startswith('профессиональный') or lying_tendency.startswith('играет'):
+        oversharing_level = max(1, oversharing_level - 2)
+    oversharing_level = max(1, min(10, oversharing_level))
+
+    # --- Default attitude & weakness ---
+    default_attitude = random.choice(default_attitudes_pool)
+    weakness = random.choice(paradoxes_pool)
+    gender_name = 'Женский' if gender == 'female' else 'Мужской'
+
+    # --- System prompt (replaces generic bio) ---
+    system_prompt = (
+        f"Ты — {name} {surname}, {age} лет, {gender_name}. "
+        f"Архетип: {archetype_name}, темперамент: {temp_name}, тип личности: {mbti_name} ({mbti_code}). "
+        f"Стиль письма: {writing_style}. "
+        f"Уровень откровенности: {oversharing_level}/10. "
+        f"Ложь: {lying_tendency}. "
+        f"Парадокс: {weakness}. "
+        f"Установка при знакомстве: {default_attitude}."
+    )
+
     # --- Bio ---
     character_for_bio = Character(
         name=name, surname=surname, gender=('Женский' if gender == 'female' else 'Мужской'),
         birth_date=birth_date.strftime('%d.%m.%Y'), age=age, zodiac=zodiac,
-        height=f"{random.randint(155, 180)} см" if gender == 'female' else f"{random.randint(170, 195)} см",
+        height=height_str,
         eye_color=eye_color, hair_color=hair_color, hair_length=hair_length,
         body_type=body_type, skin_tone=skin_tone,
         distinctive_features=distinctive_features,
@@ -622,6 +882,39 @@ def generate(seed=None, gender=None, age_group=None):
         relationship_values=relationship_values,
         backstory=backstory,
         bio='',
+        housing=spice_values.get('housing', ''),
+        financial_habit=spice_values.get('financial_habit', ''),
+        eating_habit=spice_values.get('eating_habit', ''),
+        pet=spice_values.get('pet', ''),
+        red_flags=spice_values.get('red_flags', []),
+        green_flags=spice_values.get('green_flags', []),
+        cryptonite=spice_values.get('cryptonite', ''),
+        useless_talent=spice_values.get('useless_talent', ''),
+        body_language_tell=spice_values.get('body_language_tell', ''),
+        humor_style=spice_values.get('humor_style', ''),
+        biggest_lie=spice_values.get('biggest_lie', ''),
+        anger_trigger=spice_values.get('anger_trigger', ''),
+        enemy=spice_values.get('enemy', ''),
+        sleep_type=spice_values.get('sleep_type', ''),
+        personal_scent=spice_values.get('personal_scent', ''),
+        health_issue=spice_values.get('health_issue', ''),
+        supernatural_belief=spice_values.get('supernatural_belief', ''),
+        writing_style=writing_style,
+        rp_ability=rp_ability,
+        entry_context=entry_context,
+        current_situation=current_situation,
+        current_mood=current_mood,
+        hidden_motive=hidden_motive,
+        chat_opener=chat_opener,
+        skip_factors=skip_factors,
+        harassment_reaction=harassment_reaction,
+        fav_topics=fav_topics,
+        taboo_topics=taboo_topics,
+        lying_tendency=lying_tendency,
+        oversharing_level=oversharing_level,
+        default_attitude=default_attitude,
+        weakness=weakness,
+        system_prompt=system_prompt,
     )
 
     bio = generate_bio(character_for_bio, age_group)
@@ -651,6 +944,60 @@ def _get_profession_group(profession):
             if p == profession:
                 return group
     return 'коммуникатор'
+
+
+def _pick_body_type_by_bmi(bmi):
+    if bmi < 17:
+        eligible = [(b, w) for b, w in body_types if b in ('субтильное', 'худощавое', 'изящное')]
+    elif bmi < 19:
+        eligible = [(b, w) for b, w in body_types if b in ('стройное', 'худощавое', 'изящное')]
+    elif bmi < 24:
+        eligible = [(b, w) for b, w in body_types if b in ('среднее', 'стройное', 'атлетичное')]
+    elif bmi < 28:
+        eligible = [(b, w) for b, w in body_types if b in ('плотное', 'среднее', 'коренастое')]
+    else:
+        eligible = [(b, w) for b, w in body_types if b in ('пышное', 'полное', 'плотное')]
+    if not eligible:
+        eligible = body_types
+    return weighted_choice([b[0] for b in eligible], [b[1] for b in eligible])
+
+
+def _resolve_backstory_conflicts(body_size_key, beauty_key, backstory_fragments):
+    """Resolve conflicts between body_size and beauty backstory fragments.
+    If body_size has negative body image backstory (нейтральный/отрицательный),
+    exclude beauty fragments about 'привыкла к комплиментам' and 'ценят за внешность'."""
+    negative_body = body_size_key in ('очень худая', 'пышная', 'полная')
+    if negative_body and beauty_key in ('красивая', 'очень красивая'):
+        filtered = []
+        for f in backstory_fragments:
+            if 'привыкла к комплиментам' in f or 'ценят её только за внешность' in f:
+                continue
+            filtered.append(f)
+        return filtered
+    return backstory_fragments
+
+
+_lying_roles = [
+    'богатую наследницу нефтяной компании',
+    'агента под прикрытием',
+    'ведьму из старинного рода',
+    'путешественницу во времени',
+    'космического рейнджера',
+    'пришельца с Марса',
+    'тайного агента ФСБ',
+    'стриптизёршу из элитного клуба',
+    'беглую принцессу',
+    'хакера из Anonymous',
+    'жену олигарха (который «всё контролирует»)',
+    'модель Plus Size',
+    'участницу шоу «Голос»',
+    'профессиональную гадалку',
+    'владелицу частного музея',
+]
+
+
+def _pick_lying_role():
+    return random.choice(_lying_roles)
 
 
 def generate_json(seed=None, gender=None, age_group=None):

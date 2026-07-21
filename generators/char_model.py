@@ -68,6 +68,39 @@ class Character:
     relationship_values: list
     backstory: str
     bio: str
+    housing: str
+    financial_habit: str
+    eating_habit: str
+    pet: str
+    red_flags: list
+    green_flags: list
+    cryptonite: str
+    useless_talent: str
+    body_language_tell: str
+    humor_style: str
+    biggest_lie: str
+    anger_trigger: str
+    enemy: str
+    sleep_type: str
+    personal_scent: str
+    health_issue: str
+    supernatural_belief: str
+    writing_style: str
+    rp_ability: bool
+    entry_context: str
+    current_situation: str
+    current_mood: str
+    hidden_motive: str
+    chat_opener: str
+    skip_factors: list
+    harassment_reaction: str
+    fav_topics: list
+    taboo_topics: list
+    lying_tendency: str
+    oversharing_level: int
+    default_attitude: str
+    weakness: str
+    system_prompt: str
 
 
 def weighted_choice(items, weights):
