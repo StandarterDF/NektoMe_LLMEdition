@@ -665,6 +665,8 @@ def api_chat():
     # Intercept age questions — answer from real age, not AI
     age_reply = age_reply_from_char(char, user_msg)
     if age_reply:
+        style = char.get('writing_style', '')
+        age_reply = apply_writing_style(age_reply, style)
         msgs.append({'role': 'user', 'content': user_msg})
         msgs.append({'role': 'assistant', 'content': age_reply})
         store['messages'] = msgs
@@ -698,6 +700,10 @@ def api_chat():
 
     # Log the AI response
     logger.info(f'AI Reply: {reply}')
+
+    # Apply writing style transform (all lowercase, многоточия, etc.)
+    style = char.get('writing_style', '')
+    reply = apply_writing_style(reply, style)
 
     msgs.append({'role': 'assistant', 'content': reply})
     store['messages'] = msgs
