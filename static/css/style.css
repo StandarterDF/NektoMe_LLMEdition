@@ -146,6 +146,12 @@ body.night_theme {
     text-align: center;
 }
 
+html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
 .chat-box {
     background: var(--night-background-color);
     padding: 0 !important;
@@ -155,6 +161,9 @@ body.night_theme {
     float: none !important;
     margin-left: auto !important;
     margin-right: auto !important;
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 60px);
 }
 
 .chat_container {
@@ -541,8 +550,14 @@ body.night_theme {
 @media (min-width: 1200px) {
     .col-lg-4 { width: 33.33333333%; float: left; }
     .col-lg-6 { width: 50%; float: left; }
+    .col-lg-8 { width: 66.66666667%; float: left; }
+    .col-lg-10 { width: 83.33333333%; float: left; }
     .col-lg-12 { width: 100%; float: left; }
-    .container { width: 1170px; }
+    .container { width: 1400px; }
+}
+
+@media (min-width: 992px) {
+    .col-md-10 { width: 83.33333333%; float: left; }
 }
 
 @media (min-width: 992px) and (max-width: 1199px) {
@@ -552,9 +567,10 @@ body.night_theme {
 /* Chat window */
 .window_chat_block {
     padding: 20px 8px 0 10px;
-    height: 400px;
+    flex: 1;
     overflow-y: auto;
     background: var(--night-background-color);
+    min-height: 0;
 }
 
 .window_chat_dialog_write {
@@ -587,7 +603,7 @@ body.night_theme {
     color: var(--night-chat-messages-nekto-color);
     max-width: 70%;
     word-wrap: break-word;
-    margin-left: 8px;
+    margin-left: 30px;
     margin-top: 2.5px;
     margin-bottom: 2.5px;
 }
@@ -677,6 +693,8 @@ body.night_theme {
 .window_chat_message {
     background: var(--night-chat-message-area-wrapper-background);
     padding: 15px 15px 15px 30px;
+    display: flex;
+    align-items: center;
 }
 
 .box_message.message_box_2 {

@@ -181,7 +181,6 @@ document.addEventListener('DOMContentLoaded', function () {
         .then(function (r) { return r.json(); })
         .then(function (char) {
             currentChar = char;
-            document.getElementById('partnerName').textContent = char.name || 'Nekto';
             document.getElementById('sendMessageBtn').disabled = false;
             document.getElementById('message_input').focus();
 
