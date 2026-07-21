@@ -22,21 +22,25 @@ document.addEventListener('DOMContentLoaded', function () {
         try { data = JSON.parse(raw); } catch (e) { return; }
         if (!data) return;
 
-        // Topic
+        // Topic — clear group first
+        document.querySelectorAll('.topicRow .btnradio').forEach(function (b) { b.classList.remove('checked'); });
         var topicBtn = document.querySelector('.topicRow button[data-topic="' + data.topic + '"]');
-        if (topicBtn) { topicBtn.classList.add('checked'); }
+        if (topicBtn) topicBtn.classList.add('checked');
 
         // Own gender
+        document.querySelectorAll('.threeBtns:first-of-type .btnradio').forEach(function (b) { b.classList.remove('checked'); });
         var ogBtn = document.querySelector('.threeBtns:first-of-type button[data-gender="' + data.ownGender + '"]');
-        if (ogBtn) { ogBtn.classList.add('checked'); }
+        if (ogBtn) ogBtn.classList.add('checked');
 
         // Partner gender
+        document.querySelectorAll('.wishSex .btnradio').forEach(function (b) { b.classList.remove('checked'); });
         var pgBtn = document.querySelector('.wishSex button[data-partner="' + data.partnerGender + '"]');
-        if (pgBtn) { pgBtn.classList.add('checked'); }
+        if (pgBtn) pgBtn.classList.add('checked');
 
         // Own age
+        document.querySelectorAll('#ownAgeGroup .btnradio').forEach(function (b) { b.classList.remove('checked'); });
         var oaBtn = document.querySelector('#ownAgeGroup button[data-age="' + data.ownAge + '"]');
-        if (oaBtn) { oaBtn.classList.add('checked'); }
+        if (oaBtn) oaBtn.classList.add('checked');
 
         // Partner ages
         document.querySelectorAll('#partnerAgeGroup .btncheck').forEach(function (b) {
@@ -49,8 +53,9 @@ document.addEventListener('DOMContentLoaded', function () {
         });
 
         // Theme
+        document.querySelectorAll('.colorRow .btnradio').forEach(function (b) { b.classList.remove('checked'); });
         var themeBtn = document.querySelector('.colorRow button[data-theme="' + data.theme + '"]');
-        if (themeBtn) { themeBtn.classList.add('checked'); }
+        if (themeBtn) themeBtn.classList.add('checked');
         applyTheme(data.theme);
     }
 
