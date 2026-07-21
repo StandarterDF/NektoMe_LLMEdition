@@ -145,6 +145,7 @@ def build_system_prompt(char, mode='chat'):
 
     lines = []
     lines.append(f"Ты — {v('name')} {v('surname')}, {v('age')} лет, {v('gender')}.")
+    lines.append(f"Твой точный возраст — {v('age')}. Если тебя спросят «сколько тебе лет» — называй ТОЛЬКО {v('age')}. Не ври о возрасте.")
     lines.append('')
     lines.append('=== ХАРАКТЕРИСТИКИ ПЕРСОНАЖА ===')
     lines.append(f"Архетип: {v('archetype')}")

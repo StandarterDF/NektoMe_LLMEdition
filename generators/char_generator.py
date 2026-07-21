@@ -739,11 +739,17 @@ def generate(seed=None, gender=None, age_group=None):
     # Age-filter situations
     if age_group == 'teen':
         teen_ok = [s for s in current_situations_pool if not any(
-            kw in s for kw in ['за рулём', 'стоит в пробке', 'на работе', 'лейт-шоу', 'деловой ужин', 'бар', 'вино', 'кофе в круглосуточной кофейне']
+            kw in s[0] for kw in ['за рулём', 'стоит в пробке', 'на работе', 'лейт-шоу', 'деловой ужин', 'бар', 'вино', 'кофе в круглосуточной кофейне']
         )]
-        current_situation = random.choice(teen_ok if teen_ok else current_situations_pool)
+        current_situation = weighted_choice(
+            [s[0] for s in teen_ok], [s[1] for s in teen_ok]
+        ) if teen_ok else weighted_choice(
+            [s[0] for s in current_situations_pool], [s[1] for s in current_situations_pool]
+        )
     else:
-        current_situation = random.choice(current_situations_pool)
+        current_situation = weighted_choice(
+            [s[0] for s in current_situations_pool], [s[1] for s in current_situations_pool]
+        )
     mood_weights = {
         'игривое': 10, 'философское': 10, 'агрессивное': 5, 'сонное': 12,
         'пьяное': 5, 'грустное': 10, 'тревожное': 8, 'эйфорическое': 4,
