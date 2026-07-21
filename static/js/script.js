@@ -57,6 +57,8 @@ document.addEventListener('DOMContentLoaded', function () {
         var themeBtn = document.querySelector('.colorRow button[data-theme="' + data.theme + '"]');
         if (themeBtn) themeBtn.classList.add('checked');
         applyTheme(data.theme);
+
+        updateTopicColors();
     }
 
     function applyTheme(theme) {
@@ -73,6 +75,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // Radio buttons — grouped by common parent container
     document.querySelectorAll('.btnradio').forEach(function (btn) {
         btn.addEventListener('click', function () {
+            if (this.classList.contains('disabled')) return;
             // Determine the radio group scope
             var scope = this.closest('.topicRow, .threeBtns, .colorRow') || this.closest('.btn-group');
             if (!scope) {
@@ -87,9 +90,45 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
+    // Topic buttons color the main menu + age restrictions for 18+
+    function updateTopicColors() {
+        var topicBtn = document.querySelector('.topicRow .btnradio.checked');
+        var topic = topicBtn ? topicBtn.getAttribute('data-topic') : 'chat';
+        var step = document.querySelector('.main_step');
+        step.classList.remove('adult_topic_search', 'roles_topic_search');
+        if (topic === 'flirt') {
+            step.classList.add('adult_topic_search');
+        } else if (topic === 'rp') {
+            step.classList.add('roles_topic_search');
+        }
+
+        // Age restrictions: flirt = no under 18
+        var ownTeen = document.querySelector('#ownAgeGroup button[data-age="teen"]');
+        var partnerTeen = document.querySelector('#partnerAgeGroup button[data-age="teen"]');
+        if (topic === 'flirt') {
+            // Disable teen buttons
+            if (ownTeen) { ownTeen.classList.add('disabled'); ownTeen.classList.remove('checked'); }
+            if (partnerTeen) { partnerTeen.classList.add('disabled'); partnerTeen.classList.remove('checked'); }
+            // Switch own age to young if it was teen
+            var ownChecked = document.querySelector('#ownAgeGroup .btnradio.checked');
+            if (!ownChecked || ownChecked.getAttribute('data-age') === 'teen') {
+                var youngBtn = document.querySelector('#ownAgeGroup button[data-age="young"]');
+                if (youngBtn) { youngBtn.classList.add('checked'); }
+            }
+        } else {
+            if (ownTeen) ownTeen.classList.remove('disabled');
+            if (partnerTeen) partnerTeen.classList.remove('disabled');
+        }
+    }
+
+    document.querySelectorAll('.topicRow .btnradio').forEach(function (btn) {
+        btn.addEventListener('click', updateTopicColors);
+    });
+
     // Check buttons
     document.querySelectorAll('.btncheck').forEach(function (btn) {
         btn.addEventListener('click', function () {
+            if (this.classList.contains('disabled')) return;
             this.classList.toggle('checked');
             saveFilters();
         });
@@ -137,6 +176,28 @@ document.addEventListener('DOMContentLoaded', function () {
     fetchOnlineTarget();
     animateOnline();
 
+    function scrollChatToBottom() {
+        var chatMessages = document.getElementById('chat_messages');
+        if (chatMessages && chatMessages.offsetParent !== null) {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+    }
+
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', function () {
+            scrollChatToBottom();
+        });
+    }
+
+    var msgInput = document.getElementById('message_input');
+    if (msgInput) {
+        msgInput.addEventListener('focus', function () {
+            setTimeout(function () {
+                scrollChatToBottom();
+            }, 300);
+        });
+    }
+
     function showStep(stepId) {
         document.querySelectorAll('.step_chatbox').forEach(function (s) {
             s.style.display = 'none';
@@ -173,12 +234,27 @@ document.addEventListener('DOMContentLoaded', function () {
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
-    function getSearchDelay() {
-        var hour = new Date().getHours();
-        if (hour >= 8 && hour < 24) {
-            return 300 + Math.random() * 1700;
+    function getSearchDelay(partnerAgeGroups) {
+        // partnerAgeGroups: array of age labels like ['до 17', 'от 18 до 21', ...]
+        var count = partnerAgeGroups.length;
+
+        // If only mature (36+) selected — very slow
+        if (count === 1 && partnerAgeGroups[0] === 'старше 36') {
+            return 10000 + Math.random() * 8000;
         }
-        return 500 + Math.random() * 4500;
+
+        // Base delay depends on how many age groups selected
+        var baseDelays = {
+            0: 4000,    // none selected (shouldn't happen)
+            1: 3500,
+            2: 2000,
+            3: 1200,
+            4: 600,
+        };
+        var base = baseDelays[count] || 600;
+
+        // Add randomness
+        return base + Math.random() * 1500;
     }
 
     var searchCancelled = false;
@@ -190,12 +266,14 @@ document.addEventListener('DOMContentLoaded', function () {
         var topicBtn = document.querySelector('.topicRow .btnradio.checked');
         var topic = topicBtn ? topicBtn.getAttribute('data-topic') : 'chat';
         var isAdult = topic === 'flirt';
+        var isRp = topic === 'rp';
 
         var header = document.getElementById('headerChat');
+        header.classList.remove('adult_topic', 'roles_topic');
         if (isAdult) {
             header.classList.add('adult_topic');
-        } else {
-            header.classList.remove('adult_topic');
+        } else if (isRp) {
+            header.classList.add('roles_topic');
         }
 
         document.getElementById('headerChatMode').style.display = 'none';
@@ -232,7 +310,7 @@ document.addEventListener('DOMContentLoaded', function () {
             if (searchCancelled) return;
             currentChar = char;
 
-            var delay = getSearchDelay();
+            var delay = getSearchDelay(partnerAges);
             var elapsed = Date.now() - searchStart;
             var wait = Math.max(0, delay - elapsed);
 

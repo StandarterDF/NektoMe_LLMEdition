@@ -58,7 +58,7 @@ def generate(seed=None, gender=None, age_group=None):
     if age_group is None:
         age_group = weighted_choice(
             age_group_names,
-            [30, 25, 30, 15]
+            [45, 30, 18, 7]   # teen=45%, young=30%, adult=18%, mature=7%
         )
 
     age_group_info = age_groups[age_group]
@@ -756,7 +756,10 @@ def generate(seed=None, gender=None, age_group=None):
         list(mood_weights.values()),
     )
     hidden_motive = random.choice(hidden_motives_pool)
-    chat_opener = random.choice(chat_openers_pool)
+    chat_opener = weighted_choice(
+        [o[0] for o in chat_openers_pool],
+        [o[1] for o in chat_openers_pool],
+    )
     skip_count = random.randint(1, 3)
     skip_factors = random.sample(skip_factors_pool, min(skip_count, len(skip_factors_pool)))
     if hidden_motive in ('найти флирт / вирт',) or chat_motivation == 'поиск пошлостей':
