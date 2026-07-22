@@ -26,7 +26,8 @@ from generators.char_data import (
     writing_styles, rp_ability_profiles,
     entry_contexts, current_situations_pool, current_moods_pool,
     hidden_motives_pool, chat_openers_pool, chat_openers_male_pool,
-    chat_openers_female_pool, skip_factors_pool,
+    chat_openers_female_pool, chat_openers_flirt_pool, chat_openers_rp_pool,
+    skip_factors_pool,
     harassment_reactions_pool, fav_topics_pool, taboo_topics_pool,
     lying_tendencies, oversharing_descriptions,
     foods_by_cost, wealth_to_food_cost,
@@ -45,7 +46,7 @@ from generators.char_appearance import generate_appearance, fashion_items
 from generators.char_bio import generate_backstory, generate_bio
 
 
-def generate(seed=None, gender=None, age_group=None):
+def generate(seed=None, gender=None, age_group=None, topic=None):
     if seed is not None:
         state = random.getstate()
         random.seed(seed)
@@ -58,10 +59,21 @@ def generate(seed=None, gender=None, age_group=None):
     # --- Age groups & age ---
     age_group_names = list(age_groups.keys())
     if age_group is None:
-        age_group = weighted_choice(
-            age_group_names,
-            [42, 42, 12, 4]   # teen=42%, young=42%, adult=12%, mature=4%
-        )
+        if topic == 'flirt':
+            age_group = weighted_choice(
+                age_group_names,
+                [0, 55, 35, 10]   # flirt: strictly 18+
+            )
+        elif topic == 'rp':
+            age_group = weighted_choice(
+                age_group_names,
+                [30, 40, 20, 10]   # rp: slightly older
+            )
+        else:
+            age_group = weighted_choice(
+                age_group_names,
+                [42, 42, 12, 4]   # default
+            )
 
     age_group_info = age_groups[age_group]
     min_age, max_age = age_group_info['min'], age_group_info['max']
@@ -82,10 +94,21 @@ def generate(seed=None, gender=None, age_group=None):
     city = random.choice(cities)
 
     # --- Temperament ---
-    temp_name = weighted_choice(
-        list(temperaments.keys()),
-        [25, 25, 25, 25],
-    )
+    if topic == 'flirt':
+        temp_name = weighted_choice(
+            list(temperaments.keys()),
+            [35, 30, 15, 20],
+        )
+    elif topic == 'rp':
+        temp_name = weighted_choice(
+            list(temperaments.keys()),
+            [20, 20, 30, 30],
+        )
+    else:
+        temp_name = weighted_choice(
+            list(temperaments.keys()),
+            [25, 25, 25, 25],
+        )
     temp_traits = temperaments[temp_name]
 
     # --- Archetype (weighted by temperament compatibility) ---
@@ -96,9 +119,14 @@ def generate(seed=None, gender=None, age_group=None):
         'Меланхолик':{'Невинный': 1, 'Искатель': 3, 'Любовник': 2, 'Герой': 1, 'Сирота': 2, 'Бунтарь': 1, 'Творец': 3, 'Правитель': 0, 'Мудрец': 2, 'Воин': 1, 'Маг': 2, 'Шут': 0},
     }
     compat_weights = archetype_temp_compat.get(temp_name, {k: 1 for k in archetypes})
+    topic_archetype_boost = {}
+    if topic == 'flirt':
+        topic_archetype_boost = {'Любовник': 6, 'Бунтарь': 4, 'Шут': 3, 'Маг': 2, 'Искатель': 1, 'Герой': 1}
+    elif topic == 'rp':
+        topic_archetype_boost = {'Творец': 4, 'Маг': 4, 'Искатель': 4, 'Мудрец': 3, 'Герой': 3, 'Воин': 2, 'Любовник': 1}
     archetype_name = weighted_choice(
         list(archetypes.keys()),
-        [compat_weights.get(k, 1) for k in archetypes],
+        [compat_weights.get(k, 1) + topic_archetype_boost.get(k, 0) for k in archetypes],
     )
     archetype_data = archetypes[archetype_name]
     archetype_desire = archetype_data['desire']
@@ -183,10 +211,17 @@ def generate(seed=None, gender=None, age_group=None):
     profile_normalized = {k: max(0.01, v + 1.0) for k, v in profile.items()}
 
     # --- Body size & beauty first (affect personality + backstory) ---
-    body_size_key = weighted_choice(
-        list(body_sizes.keys()),
-        [body_sizes[k]['prob'] for k in body_sizes],
-    )
+    if topic == 'flirt':
+        body_probs = {'очень худая': 10, 'стройная': 35, 'средняя': 25, 'пышная': 20, 'полная': 10}
+        body_size_key = weighted_choice(
+            list(body_sizes.keys()),
+            [body_probs[k] for k in body_sizes],
+        )
+    else:
+        body_size_key = weighted_choice(
+            list(body_sizes.keys()),
+            [body_sizes[k]['prob'] for k in body_sizes],
+        )
     body_size_data = body_sizes[body_size_key]
     weight_range = body_size_data.get('weight_range', '')
     body_size_display = f'{body_size_key} ({weight_range} кг)' if weight_range else body_size_key
@@ -194,10 +229,17 @@ def generate(seed=None, gender=None, age_group=None):
         if dim in profile:
             profile[dim] += val
 
-    beauty = weighted_choice(
-        list(beauty_levels.keys()),
-        [beauty_levels[k]['prob'] for k in beauty_levels],
-    )
+    if topic == 'flirt':
+        beauty_probs = {'обычная': 20, 'симпатичная': 30, 'красивая': 30, 'очень красивая': 20}
+        beauty = weighted_choice(
+            list(beauty_levels.keys()),
+            [beauty_probs[k] for k in beauty_levels],
+        )
+    else:
+        beauty = weighted_choice(
+            list(beauty_levels.keys()),
+            [beauty_levels[k]['prob'] for k in beauty_levels],
+        )
     beauty_data = beauty_levels[beauty]
     for dim, val in beauty_data['profile'].items():
         if dim in profile:
@@ -243,7 +285,11 @@ def generate(seed=None, gender=None, age_group=None):
         'родимое пятно', 'пухлые губы', 'густые брови', 'веснушки',
     ], random.randint(0, 2))
 
-    clothing_style = pick_from_pool(clothing_styles_pool, profile_normalized, 1, 1)[0]
+    if topic == 'flirt':
+        style_boost_kwargs = {'boost_list': ['элегантный', 'романтичный', 'готический', 'уличный стиль', 'спорт-шик']}
+    else:
+        style_boost_kwargs = {}
+    clothing_style = pick_from_pool(clothing_styles_pool, profile_normalized, 1, 1, **style_boost_kwargs)[0]
 
     extra_backstory = []
     extra_backstory.extend(body_size_data['backstory'])
@@ -493,7 +539,12 @@ def generate(seed=None, gender=None, age_group=None):
                 all_fetish_items.append((cat_name, f_name))
                 all_fetish_weights.append(max(0.1, w))
 
-        fetish_count = random.randint(fetish_config.get('count_min', 1), fetish_config.get('count_max', 3))
+        fetish_count_min = fetish_config.get('count_min', 1)
+        fetish_count_max = fetish_config.get('count_max', 3)
+        if topic == 'flirt':
+            fetish_count_min = min(fetish_count_min + 1, 5)
+            fetish_count_max = min(fetish_count_max + 2, 6)
+        fetish_count = random.randint(fetish_count_min, fetish_count_max)
         chosen = set()
         fetishes = []
         attempts = 0
@@ -573,8 +624,11 @@ def generate(seed=None, gender=None, age_group=None):
     sensuality = profile_normalized.get('sensuality', 0)
     romance = profile_normalized.get('romance', 0)
     kink_score = num_fetishes * 0.15 + sensuality * 0.4 + romance * 0.1
-    if archetype_name in kinkiness_levels['консервативный']['archetype_block']:
-        kink_score *= 0.3
+    if topic == 'flirt':
+        kink_score *= 1.5
+    if not topic or topic != 'flirt':
+        if archetype_name in kinkiness_levels['консервативный']['archetype_block']:
+            kink_score *= 0.3
     kink_level = 'консервативный'
     for kl, kdata in kinkiness_levels.items():
         if kink_score >= kdata['threshold']:
@@ -591,6 +645,14 @@ def generate(seed=None, gender=None, age_group=None):
             mw *= 3
         elif mv == 'поиск пошлостей' and kink_level == 'раскрепощённый':
             mw *= 1.5
+        if topic == 'flirt' and mv == 'поиск пошлостей':
+            mw *= 5
+        if topic == 'flirt' and mv in ('поиск друзей', 'просто скучно', 'повысить самооценку'):
+            mw *= 0.15
+        if topic == 'rp' and mv in ('поиск друзей', 'просто скучно', 'поиск приключений'):
+            mw *= 3
+        if topic == 'rp' and mv == 'поиск пошлостей':
+            mw *= 0.2
         if archetype_name in mdata.get('archetype_boost', []):
             mw *= 3
         if mv == 'поиск отношений' and relationship_status in ('в отношениях', 'замужем'):
@@ -616,7 +678,29 @@ def generate(seed=None, gender=None, age_group=None):
         astrology_belief = 'не верит в астрологию'
 
     # --- Psychological trauma (before backstory, so backstory can reference it) ---
-    trauma = random.choice(trauma_data)
+    # Archetype-trauma compatibility: boost weights for matching traumas
+    archetype_trauma_compat = {
+        'Невинный': {'развод родителей': 4, 'потеря близкого': 3, 'одиночество': 2},
+        'Сирота': {'потеря близкого': 4, 'эмоциональное отвержение': 3, 'одиночество': 2, 'предательство близкого': 2},
+        'Воин': {'буллинг': 4, 'физическое насилие': 3, 'отвержение внешности': 2},
+        'Искатель': {'гиперопека': 4, 'воспитание с установками': 3, 'эмоциональное отвержение': 2},
+        'Бунтарь': {'гиперопека': 4, 'физическое насилие': 3, 'воспитание с установками': 2},
+        'Любовник': {'эмоциональное отвержение': 4, 'предательство близкого': 3, 'измена': 2, 'одиночество': 2},
+        'Творец': {'воспитание с установками': 4, 'эмоциональное отвержение': 2, 'буллинг': 2},
+        'Правитель': {'бедность в детстве': 4, 'предательство близкого': 3, 'развод родителей': 2},
+        'Маг': {'одиночество': 4, 'потеря близкого': 2, 'воспитание с установками': 2},
+        'Мудрец': {'предательство близкого': 4, 'измена': 3, 'воспитание с установками': 2},
+        'Шут': {'эмоциональное отвержение': 4, 'одиночество': 3, 'развод родителей': 2},
+        'Герой': {'потеря близкого': 4, 'физическое насилие': 3, 'буллинг': 3, 'предательство близкого': 2},
+    }
+    if topic == 'flirt':
+        flirt_safe_traumas = [t for t in trauma_data if t['name'] not in ('сексуальное насилие', 'отвержение внешности')]
+        trauma_candidates = flirt_safe_traumas if flirt_safe_traumas else trauma_data
+    else:
+        trauma_candidates = trauma_data
+    compat_map = archetype_trauma_compat.get(archetype_name, {})
+    trauma_weights = [compat_map.get(t['name'], 1) for t in trauma_candidates]
+    trauma = weighted_choice(trauma_candidates, trauma_weights)
     trauma_name = trauma['name']
     trauma_consequence = random.choice(trauma['consequence'])
     trauma_defense = random.choice(trauma['defense'])
@@ -740,10 +824,37 @@ def generate(seed=None, gender=None, age_group=None):
         habits = [h for h in habits if h != 'просыпаться в 5 утра']
 
     # --- Chat communication module (стиль письма, RP, мотивация входа) ---
-    writing_style = random.choice(writing_styles)['name']
+    if topic == 'rp':
+        style_weights = {
+            'игровой стиль': 30, 'идеальная грамотность': 20,
+            '~эстет~': 15, 'смешанный стиль': 10,
+            'любитель многоточий': 8, 'скобочки и смайлики': 5,
+            'all lowercase': 1, 'куча опечаток': 1,
+        }
+        writing_style = weighted_choice(
+            list(style_weights.keys()), list(style_weights.values())
+        )
+    elif topic == 'flirt':
+        style_weights = {
+            'игровой стиль': 25, 'идеальная грамотность': 20,
+            'скобочки и смайлики': 15, 'смешанный стиль': 12,
+            '~эстет~': 10, 'любитель многоточий': 8,
+            'all lowercase': 4, 'куча опечаток': 3,
+        }
+        writing_style = weighted_choice(
+            list(style_weights.keys()), list(style_weights.values())
+        )
+    else:
+        writing_style = random.choice(writing_styles)['name']
+    if topic == 'rp':
+        rp_weights = [20, 15, 35, 30]
+    elif topic == 'flirt':
+        rp_weights = [60, 15, 15, 10]
+    else:
+        rp_weights = [88, 6, 4, 2]
     rp_level = weighted_choice(
         [r['level'] for r in rp_ability_profiles],
-        [88, 6, 4, 2],
+        rp_weights,
     )
     rp_ability = rp_level in ('активный рп', 'профи рп')
     entry_context = random.choice(entry_contexts)
@@ -768,11 +879,61 @@ def generate(seed=None, gender=None, age_group=None):
         'расслабленное': 8, 'апатичное': 6, 'весёлое': 10,
         'любопытное': 12, 'саркастичное': 7, 'благодарное': 3, 'одинокое': 8,
     }
+    if topic == 'flirt':
+        mood_weights['игривое'] = 30
+        mood_weights['влюблённое'] = 20
+        mood_weights['эйфорическое'] = 15
+        mood_weights['агрессивное'] = 2
+    elif topic == 'rp':
+        mood_weights['философское'] = 25
+        mood_weights['любопытное'] = 22
+        mood_weights['расслабленное'] = 15
+        mood_weights['эйфорическое'] = 10
     current_mood = weighted_choice(
         list(mood_weights.keys()),
         list(mood_weights.values()),
     )
     hidden_motive = random.choice(hidden_motives_pool)
+    if topic == 'flirt':
+        flirt_motive_weights = {
+            'найти флирт / вирт': 25,
+            'проверить, «а вдруг встречу свою половинку»': 18,
+            'выпросить комплименты': 15,
+            'повысить самооценку за чужой счёт': 12,
+            'разнообразить скучный вечер': 10,
+            'реально найти отношения': 8,
+            'просто посмеяться': 6,
+            'найти друга для переписок': 4,
+            'просто убить 15 минут': 2,
+            'выговориться про бывшего/бывшую': 2,
+            'пожаловаться на жизнь': 2,
+            'найти того, кто выслушает': 2,
+            'потроллить неадекватов': 1,
+            'спор ради спора': 1,
+            'получить совет в сложной ситуации': 1,
+            'постебаться над странными людьми': 1,
+        }
+        hidden_motive = weighted_choice(list(flirt_motive_weights.keys()), list(flirt_motive_weights.values()))
+    elif topic == 'rp':
+        rp_motive_weights = {
+            'найти друга для переписок': 18,
+            'просто убить 15 минут': 15,
+            'разнообразить скучный вечер': 14,
+            'просто посмеяться': 12,
+            'найти того, кто выслушает': 10,
+            'проверить, «а вдруг встречу свою половинку»': 8,
+            'спор ради спора': 6,
+            'пожаловаться на жизнь': 5,
+            'получить совет в сложной ситуации': 4,
+            'выговориться про бывшего/бывшую': 3,
+            'потроллить неадекватов': 3,
+            'постебаться над странными людьми': 2,
+            'найти флирт / вирт': 2,
+            'выпросить комплименты': 2,
+            'повысить самооценку за чужой счёт': 1,
+            'реально найти отношения': 1,
+        }
+        hidden_motive = weighted_choice(list(rp_motive_weights.keys()), list(rp_motive_weights.values()))
     if gender == 'male':
         opener_pool = chat_openers_pool + chat_openers_male_pool
         # Убираем женские варианты из пула
@@ -781,6 +942,12 @@ def generate(seed=None, gender=None, age_group=None):
         opener_pool = chat_openers_pool + chat_openers_female_pool
         # Убираем мужские варианты из пула
         opener_pool = [o for o in opener_pool if not o[0].lower().startswith('м ')]
+    if topic == 'flirt':
+        opener_pool = opener_pool + chat_openers_flirt_pool
+    elif topic == 'rp':
+        opener_pool = opener_pool + chat_openers_rp_pool
+        if random.random() < 0.1:
+            opener_pool = opener_pool + chat_openers_flirt_pool
     chat_opener = weighted_choice(
         [o[0] for o in opener_pool],
         [o[1] for o in opener_pool],
@@ -842,6 +1009,8 @@ def generate(seed=None, gender=None, age_group=None):
         oversharing_level = min(10, oversharing_level + 1)
     if lying_tendency.startswith('профессиональный') or lying_tendency.startswith('играет'):
         oversharing_level = max(1, oversharing_level - 2)
+    if topic == 'flirt':
+        oversharing_level = min(10, oversharing_level + 2)
     oversharing_level = max(1, min(10, oversharing_level))
 
     # --- Default attitude & weakness ---

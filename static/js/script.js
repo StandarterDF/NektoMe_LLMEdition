@@ -76,19 +76,44 @@ document.addEventListener('DOMContentLoaded', function () {
     document.querySelectorAll('.btnradio').forEach(function (btn) {
         btn.addEventListener('click', function () {
             if (this.classList.contains('disabled')) return;
-            // Determine the radio group scope
-            var scope = this.closest('.topicRow, .threeBtns, .colorRow') || this.closest('.btn-group');
-            if (!scope) {
-                scope = document.getElementById('ownAgeGroup');
-                if (!scope || !scope.contains(this)) return;
-            }
+            var scope = this.closest('.topicRow, .threeBtns, .colorRow, .s-age') || this.closest('.btn-group');
+            if (!scope) return;
             scope.querySelectorAll('.btnradio').forEach(function (b) {
                 if (b !== btn) b.classList.remove('checked');
             });
             this.classList.add('checked');
             saveFilters();
+            // Own gender change → toggle own age
+            if (scope.classList.contains('threeBtns') && scope.parentElement.classList.contains('sexRow')) {
+                updateOwnAgeState();
+            }
         });
     });
+
+    function updateOwnAgeState() {
+        var ownGender = document.querySelector('.threeBtns:first-of-type .btnradio.checked');
+        var isAny = ownGender && ownGender.getAttribute('data-gender') === 'any';
+        var topicBtn = document.querySelector('.topicRow .btnradio.checked');
+        var topic = topicBtn ? topicBtn.getAttribute('data-topic') : 'chat';
+        document.querySelectorAll('#ownAgeGroup .btnradio').forEach(function (b) {
+            if (isAny) {
+                b.classList.add('disabled');
+                b.classList.remove('checked');
+            } else {
+                b.classList.remove('disabled');
+                // Re-apply flirt restriction (teen disabled for 18+)
+                if (topic === 'flirt' && b.getAttribute('data-age') === 'teen') {
+                    b.classList.add('disabled');
+                    b.classList.remove('checked');
+                }
+            }
+        });
+        // Ensure at least one age is checked when re-enabled
+        if (!isAny && !document.querySelector('#ownAgeGroup .btnradio.checked')) {
+            var young = document.querySelector('#ownAgeGroup button[data-age="young"]');
+            if (young) young.classList.add('checked');
+        }
+    }
 
     // Topic buttons color the main menu + age restrictions for 18+
     function updateTopicColors() {
@@ -121,7 +146,10 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     document.querySelectorAll('.topicRow .btnradio').forEach(function (btn) {
-        btn.addEventListener('click', updateTopicColors);
+        btn.addEventListener('click', function () {
+            updateTopicColors();
+            updateOwnAgeState();
+        });
     });
 
     // Check buttons
@@ -135,6 +163,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // Restore saved filters on load
     restoreFilters();
+    updateOwnAgeState();
 
     // Online counter — fetches from server, animates smoothly
     var currentCount = 2000;
@@ -547,6 +576,8 @@ document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('talk_over').style.display = '';
         document.getElementById('message_input').setAttribute('contenteditable', 'false');
         document.getElementById('message_input').blur();
+        var cm = document.getElementById('chat_messages');
+        if (cm) cm.scrollTop = cm.scrollHeight;
     }
 
     // Talk over buttons
