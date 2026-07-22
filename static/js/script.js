@@ -299,6 +299,7 @@ document.addEventListener('DOMContentLoaded', function () {
         block.appendChild(inner);
         chatMessages.appendChild(block);
         chatMessages.scrollTop = chatMessages.scrollHeight;
+        return block;
     }
 
     function getSearchDelay(partnerAgeGroups) {
@@ -348,6 +349,9 @@ document.addEventListener('DOMContentLoaded', function () {
         showStep('connectingStep');
 
         // Collect filters
+        var ownGenderBtn = document.querySelector('.threeBtns:first-of-type .btnradio.checked');
+        var ownGender = ownGenderBtn ? ownGenderBtn.getAttribute('data-gender') : 'any';
+
         var partnerGenderBtn = document.querySelector('.wishSex .btnradio.checked');
         var partnerGender = partnerGenderBtn ? partnerGenderBtn.getAttribute('data-partner') : 'any';
 
@@ -367,6 +371,7 @@ document.addEventListener('DOMContentLoaded', function () {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                own_gender: ownGender,
                 partner_gender: partnerGender,
                 partner_age: partnerAges,
                 topic: topic
@@ -398,16 +403,37 @@ document.addEventListener('DOMContentLoaded', function () {
                 chatMessages.innerHTML = '';
                 stopAgentPolling();
 
-                // Show opener after brief delay
-                var opener = char.chat_opener || 'Привет!';
+                // Show typing indicator, then opener(s)
+                var openers = [];
+                if (char._openers_count > 1) {
+                    // Multi-part opener — split by [NEXT]
+                    var raw = char.chat_opener || 'Привет!';
+                    openers = raw.split('[NEXT]').map(function (s) { return s.trim(); }).filter(function (s) { return s; });
+                } else {
+                    openers = [char.chat_opener || 'Привет!'];
+                }
+                var typing = document.getElementById('typing_indicator');
+                if (typing) typing.style.display = 'block';
                 setTimeout(function () {
                     if (!searchCancelled) {
-                        addMessage(opener, 'nekto');
-                        if (char.agent_mode) {
-                            startAgentPolling();
+                        if (typing) typing.style.display = 'none';
+                        var oi = 0;
+                        function showNextOpener() {
+                            if (oi >= openers.length) {
+                                if (char.agent_mode) startAgentPolling();
+                                return;
+                            }
+                            addMessage(openers[oi], 'nekto');
+                            oi++;
+                            if (oi < openers.length) {
+                                setTimeout(showNextOpener, 600 + Math.random() * 800);
+                            } else {
+                                if (char.agent_mode) startAgentPolling();
+                            }
                         }
+                        showNextOpener();
                     }
-                }, 300);
+                }, 1200 + Math.random() * 800);
             }, wait);
         })
         .catch(function () {

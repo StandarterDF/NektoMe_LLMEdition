@@ -207,7 +207,7 @@ def make_char_json(char):
     return d
 
 
-def build_system_prompt(char, mode='chat'):
+def build_system_prompt(char, mode='chat', user_gender=None):
     if mode == 'agent':
         mode = 'chat'
     def v(key, default=''):
@@ -218,6 +218,10 @@ def build_system_prompt(char, mode='chat'):
 
     lines = []
     lines.append(f"Ты — {v('name')} {v('surname')}, {v('age')} лет, {v('gender')}.")
+    if user_gender == 'male':
+        lines.append('Твой собеседник — мужчина. Обращайся к нему в мужском роде.')
+    elif user_gender == 'female':
+        lines.append('Твой собеседник — женщина. Обращайся к ней в женском роде.')
     lines.append('')
     lines.append('=== ХАРАКТЕРИСТИКИ ПЕРСОНАЖА ===')
     lines.append(f"Архетип: {v('archetype')}")
@@ -375,9 +379,16 @@ def build_system_prompt(char, mode='chat'):
     return '\n'.join(lines)
 
 
-def build_instruction(mode='chat'):
+def build_instruction(mode='chat', user_gender=None):
+    gender_hint = ''
+    if user_gender == 'male':
+        gender_hint = '\nВАЖНО: Твой собеседник — мужчина. Если он представится женским именем — это странно, отреагируй на это.\n'
+    elif user_gender == 'female':
+        gender_hint = '\nВАЖНО: Твой собеседник — женщина.\n'
+
     if mode == 'agent':
         return (
+            gender_hint +
             'ВАЖНО: 1 предложение = 1 сообщение. '
             'Никогда не пиши больше одного предложения в сообщении. '
             'Если хочешь сказать несколько предложений — каждое новое через [NEXT]:\n'
@@ -395,8 +406,10 @@ def build_instruction(mode='chat'):
         )
     if mode == 'flirt':
         return (
+            gender_hint +
             'Формат: ты пишешь в текстовом мессенджере с телефона. '
             'Следуй своему профилю выше. Пиши МАКСИМУМ 15-25 слов (1-3 предложения). '
+            'Можешь разделять сообщения через [NEXT], чтобы отправить два сообщения подряд с паузой. '
             'Не выдумывай факты, родственников или хобби, которых нет в профиле. '
             'Естественный живой язык, без кринжового сленга ("о, классика", "ну ты даешь"). '
             'ТВОЯ ЗАДАЧА: это режим для пошлостей и сексуальной ролевой игры. '
@@ -417,6 +430,7 @@ def build_instruction(mode='chat'):
         )
     elif mode == 'rp':
         return (
+            gender_hint +
             'Формат: ролевая игра в нарративном стиле. '
             'Следуй своему профилю выше. Пиши МАКСИМУМ 20-30 слов (2-3 предложения). '
             'Не выдумывай факты, родственников или хобби, которых нет в профиле. '
@@ -438,8 +452,11 @@ def build_instruction(mode='chat'):
         )
     else:
         return (
+            gender_hint +
             'Формат: ты пишешь в текстовом мессенджере с телефона. '
             'Следуй своему профилю выше. Пиши МАКСИМУМ 15-20 слов (1-2 предложения). '
+            'Можешь разделять сообщения через [NEXT], чтобы отправить два сообщения подряд с паузой. '
+            'Например: «Привет! [NEXT] Как дела?» — это отправится как два отдельных сообщения.\n\n'
             'Не выдумывай факты, родственников или хобби, которых нет в профиле. '
             'Не выдавай всё сразу — отвечай коротко и по делу. Задавай встречные вопросы. '
             'Естественный живой язык, без кринжового сленга ("о, классика", "ну ты даешь"). '
@@ -506,6 +523,14 @@ def api_generate():
     elif partner_gender in ('Ж', 'female'):
         gender = 'female'
 
+    user_gender = data.get('own_gender', 'any')
+    if user_gender == 'М':
+        user_gender = 'male'
+    elif user_gender == 'Ж':
+        user_gender = 'female'
+    else:
+        user_gender = None
+
     age_group = partner_age_groups(partner_age) if partner_age else None
 
     seed = random.randint(0, 2**31)
@@ -515,6 +540,7 @@ def api_generate():
     agent_enabled = AGENT_ENABLED
 
     char_data = make_char_json(char)
+    char_data['user_gender'] = user_gender
     char_data['agent_mode'] = agent_enabled
     token = str(uuid.uuid4())
     opener = char_data.get('chat_opener', '')
@@ -525,7 +551,11 @@ def api_generate():
     time_label = 'ночь' if 0 <= hour < 6 else 'утро' if 6 <= hour < 12 else 'день' if 12 <= hour < 18 else 'вечер'
     initial_msgs.append({'role': 'user', 'content': f'[Сейчас {time_label}, моё время — {hour:02d}:{now.minute:02d}]'})
     if opener:
-        initial_msgs.append({'role': 'assistant', 'content': opener})
+        parts = [p.strip() for p in opener.split('[NEXT]') if p.strip()]
+        if not parts:
+            parts = [opener]
+        for part in parts:
+            initial_msgs.append({'role': 'assistant', 'content': part})
     char_store[token] = {
         'character': char_data,
         'messages': initial_msgs,
@@ -538,6 +568,7 @@ def api_generate():
         },
     }
     char_data['_token'] = token
+    char_data['_openers_count'] = len([m for m in initial_msgs if m['role'] == 'assistant'])
 
     logger.info('--- FULL CHARACTER ---')
     logger.info(json.dumps(char_data, ensure_ascii=False, indent=2, default=str))
@@ -651,6 +682,47 @@ LIYING_REPLIES = {
 }
 
 
+def _gender_adapt(text, char_gender):
+    """Adapt feminine verb forms to masculine if character is male."""
+    if char_gender != 'Мужской':
+        return text
+    replacements = [
+        ('рада', 'рад'), ('Рада', 'Рад'),
+        ('согласна', 'согласен'), ('Согласна', 'Согласен'),
+        ('поспорила', 'поспорил'), ('думала', 'думал'),
+        ('сказала', 'сказал'), ('могла', 'мог'),
+        ('хотела', 'хотел'), ('видела', 'видел'),
+        ('была', 'был'), ('успела', 'успел'),
+        ('лгунья', 'лгун'), ('Лгунья', 'Лгун'),
+        ('ушла', 'ушёл'), ('пришла', 'пришёл'),
+        ('дождалась', 'дождался'), ('нашлась', 'нашёлся'),
+        ('ушла', 'ушёл'), ('стала', 'стал'),
+        ('взялась', 'взялся'), ('занялась', 'занялся'),
+        ('включилась', 'включился'), ('отвлеклась', 'отвлёкся'),
+        ('смотрела', 'смотрел'), ('сидела', 'сидел'),
+        ('лежала', 'лежал'), ('стояла', 'стоял'),
+        ('молчала', 'молчал'), ('писала', 'писал'),
+        ('читала', 'читал'), ('играла', 'играл'),
+        ('спала', 'спал'), ('ела', 'ел'),
+        ('пила', 'пил'), ('бежала', 'бежал'),
+        ('летела', 'летел'), ('плыла', 'плыл'),
+        ('ждала', 'ждал'), ('звала', 'звал'),
+        ('просила', 'просил'), ('давала', 'давал'),
+        ('брала', 'брал'), ('понимала', 'понимал'),
+        ('знала', 'знал'), ('любила', 'любил'),
+        ('верила', 'верил'), ('думала', 'думал'),
+        ('решила', 'решил'), ('сказала', 'сказал'),
+        ('спросила', 'спросил'), ('ответила', 'ответил'),
+        ('посмотрела', 'посмотрел'), ('увидела', 'увидел'),
+        ('услышала', 'услышал'), ('почувствовала', 'почувствовал'),
+        ('поняла', 'понял'), ('заметила', 'заметил'),
+        ('вспомнила', 'вспомнил'), ('забыла', 'забыл'),
+    ]
+    for fem, masc in replacements:
+        text = text.replace(fem, masc)
+    return text
+
+
 def fallback_reply(char, msgs, user_msg):
     """Template-based fallback when AI is not configured."""
     attitude = char.get('default_attitude', 'нейтральная и вежливая')
@@ -661,11 +733,17 @@ def fallback_reply(char, msgs, user_msg):
     humor = char.get('humor_style', '')
     rp = char.get('rp_ability', False)
     name = char.get('name', '')
+    char_gender = char.get('gender', 'Женский')
     mood = char.get('current_mood', 'нормальное')
 
     lower = user_msg.lower()
 
-    is_greeting = re.search(r'\b(привет|здравствуй|здравствуйте|хай|хелло|салют|даров|здарова)\b', lower) is not None
+    already_greeted = any(
+        m['role'] == 'assistant'
+        and re.search(r'\b(привет|здравствуй|хай|хелло|салют|даров|здарова)\b', m['content'].lower())
+        for m in msgs
+    )
+    is_greeting = not already_greeted and re.search(r'\b(привет|здравствуй|здравствуйте|хай|хелло|салют|даров|здарова)\b', lower) is not None
     is_bye = re.search(r'\b(пока|прощай|бывай)\b|до свидания', lower) is not None
     is_how = any(w in lower for w in ['как дела', 'как ты', 'чё как', 'how are', 'как жизнь'])
     is_compliment = re.search(r'\b(красив|мил|симпатич|хорош|клёв|прикольн|классн)', lower) is not None
@@ -687,6 +765,8 @@ def fallback_reply(char, msgs, user_msg):
     elif is_greeting:
         base = attitude_replies.get('greeting', 'Привет!')
         reply = base
+        if random.random() < 0.15:
+            reply = reply[0].lower() + reply[1:]
     elif is_compliment:
         base = attitude_replies.get('agree', 'Спасибо!')
         reply = base + (' Ты тоже ничего так!' if oversharing >= 7 else '')
@@ -715,6 +795,7 @@ def fallback_reply(char, msgs, user_msg):
     if rp and random.random() < 0.3:
         reply = f'*{name.lower()} задумчиво смотрит на тебя*\n{reply}'
 
+    reply = _gender_adapt(reply, char_gender)
     return apply_writing_style(reply, style)
 
 
@@ -734,7 +815,8 @@ def _agent_maybe_reconnect(char, agent_state):
         return None
     agent_state['disconnected'] = False
     agent_state['consecutive'] = 0
-    return char.get('chat_opener', 'Привет! Я вернулась.')
+    opener = char.get('chat_opener', 'Привет! Я вернулась.')
+    return _gender_adapt(opener, char.get('gender', 'Женский'))
 
 
 _MAX_MSG_LEN = 280
@@ -773,7 +855,8 @@ def _split_long_msg(text):
         return None
     agent_state['disconnected'] = False
     agent_state['consecutive'] = 0
-    return char.get('chat_opener', 'Привет! Я вернулась.')
+    opener = char.get('chat_opener', 'Привет! Я вернулась.')
+    return _gender_adapt(opener, char.get('gender', 'Женский'))
 
 
 @app.route('/api/chat', methods=['POST'])
@@ -811,7 +894,8 @@ def api_chat():
         store['messages'] = msgs
         return jsonify({'reply': farewell, 'agent_messages': [], 'agent_disconnected': True})
 
-    system_prompt = build_system_prompt(char, mode=topic)
+    user_gender = char.get('user_gender')
+    system_prompt = build_system_prompt(char, mode=topic, user_gender=user_gender)
 
     # Build messages for AI
     ai_messages = [{'role': 'system', 'content': system_prompt}]
@@ -819,7 +903,7 @@ def api_chat():
         ai_messages.append({'role': m['role'], 'content': m['content']})
 
     instruction_mode = 'agent' if agent_state.get('enabled') else topic
-    instruction = build_instruction(mode=instruction_mode)
+    instruction = build_instruction(mode=instruction_mode, user_gender=user_gender)
     ai_messages.append({'role': 'system', 'content': instruction})
 
     # Log the full AI request
@@ -864,32 +948,36 @@ def api_chat():
 
     style = char.get('writing_style', '')
 
-    # Agent mode: split [NEXT], \n\n, or long messages by sentences
+    # Split [NEXT] into multiple consecutive messages (all modes)
     agent_messages = []
     agent_disconnected = agent_state.get('disconnected', False)
 
-    if agent_state.get('enabled') and reply:
+    if reply:
         parts = reply.split('[NEXT]')
         reply = parts[0].strip()
         extras = [p.strip() for p in parts[1:] if p.strip()]
-        if not extras:
+
+        if extras:
+            for extra in extras[:3]:
+                extra = apply_writing_style(extra, style)
+                agent_messages.append(extra)
+                msgs.append({'role': 'assistant', 'content': extra})
+        elif agent_state.get('enabled'):
+            # Agent mode fallback: split by double newline if no [NEXT]
             parts = reply.split('\n\n')
             parts = [p.strip() for p in parts if p.strip()]
             if len(parts) > 1:
                 reply = parts[0]
                 extras = parts[1:]
-
-        # Split long messages by sentences
-        all_parts = []
-        for p in [reply] + extras:
-            all_parts.extend(_split_long_msg(p))
-        reply = all_parts[0]
-        extras = all_parts[1:]
-
-        for extra in extras[:3]:
-            extra = apply_writing_style(extra, style)
-            agent_messages.append(extra)
-            msgs.append({'role': 'assistant', 'content': extra})
+                all_parts = []
+                for p in [reply] + extras:
+                    all_parts.extend(_split_long_msg(p))
+                reply = all_parts[0]
+                extras = all_parts[1:]
+                for extra in extras[:3]:
+                    extra = apply_writing_style(extra, style)
+                    agent_messages.append(extra)
+                    msgs.append({'role': 'assistant', 'content': extra})
 
     reply = apply_writing_style(reply, style)
     msgs.append({'role': 'assistant', 'content': reply})
