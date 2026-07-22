@@ -785,6 +785,11 @@ def generate(seed=None, gender=None, age_group=None):
         [o[0] for o in opener_pool],
         [o[1] for o in opener_pool],
     )
+    chat_opener = chat_opener.replace('{name}', name).replace('{age}', str(age))
+    chat_opener = chat_opener.replace('{city}', city).replace('{profession}', profession)
+    chat_opener = chat_opener.replace('{zodiac}', zodiac).replace('{mood}', current_mood)
+    if '{hobby}' in chat_opener and hobbies:
+        chat_opener = chat_opener.replace('{hobby}', random.choice(hobbies))
     skip_count = random.randint(1, 3)
     skip_factors = random.sample(skip_factors_pool, min(skip_count, len(skip_factors_pool)))
     if hidden_motive in ('найти флирт / вирт',) or chat_motivation == 'поиск пошлостей':
