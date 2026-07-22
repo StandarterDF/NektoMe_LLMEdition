@@ -104,7 +104,11 @@ class Character:
 
 
 def weighted_choice(items, weights):
+    if not items:
+        raise ValueError("weighted_choice: empty items")
     total = sum(weights)
+    if total <= 0:
+        return random.choice(items)
     r = random.uniform(0, total)
     cumulative = 0
     for item, w in zip(items, weights):
@@ -117,15 +121,16 @@ def weighted_choice(items, weights):
 def weighted_sample(pool, weights, k):
     if k >= len(pool):
         return list(pool)
-    indices = list(range(len(pool)))
+    items = list(pool)
+    ws = list(weights)
     chosen = []
     for _ in range(k):
-        if not indices:
+        if not items:
             break
-        ws = [weights[i] for i in indices]
-        idx = weighted_choice(indices, ws)
-        indices.remove(idx)
-        chosen.append(pool[idx])
+        idx = weighted_choice(range(len(items)), ws)
+        chosen.append(items[idx])
+        items.pop(idx)
+        ws.pop(idx)
     return chosen
 
 
@@ -185,6 +190,7 @@ def zodiac_sign(day, month):
         (4, 20, 'Овен'), (5, 21, 'Телец'), (6, 21, 'Близнецы'),
         (7, 22, 'Рак'), (8, 21, 'Лев'), (9, 23, 'Дева'),
         (10, 23, 'Весы'), (11, 23, 'Скорпион'), (12, 22, 'Стрелец'),
+        (12, 31, 'Козерог'),
     ]
     for m, d, sign in signs:
         if month == m and day <= d:

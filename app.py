@@ -2,6 +2,7 @@ import random
 import json
 import uuid
 import os
+import re
 import urllib.request
 import logging
 import threading
@@ -559,12 +560,12 @@ def fallback_reply(char, msgs, user_msg):
 
     lower = user_msg.lower()
 
-    is_greeting = any(w in lower for w in ['привет', 'здравствуй', 'хай', 'хелло', 'салют', 'даров', 'ку', 'здарова'])
-    is_bye = any(w in lower for w in ['пока', 'до свидания', 'прощай', 'удачи', 'бывай'])
+    is_greeting = re.search(r'\b(привет|здравствуй|здравствуйте|хай|хелло|салют|даров|здарова)\b', lower) is not None
+    is_bye = re.search(r'\b(пока|прощай|бывай)\b|до свидания', lower) is not None
     is_how = any(w in lower for w in ['как дела', 'как ты', 'чё как', 'how are', 'как жизнь'])
-    is_question = '?' in user_msg or any(w in lower for w in ['что', 'как', 'почему', 'зачем', 'кто', 'где', 'когда'])
-    is_compliment = any(w in lower for w in ['красив', 'мил', 'симпатич', 'хорош', 'клёв', 'прикольн', 'классн'])
-    is_insult = any(w in lower for w in ['дурак', 'туп', 'идиот', 'отстань', 'заткнись', 'пошёл', 'бесишь'])
+    is_compliment = re.search(r'\b(красив|мил|симпатич|хорош|клёв|прикольн|классн)', lower) is not None
+    is_insult = re.search(r'\b(дурак|туп|идиот|отстань|заткнись|пошёл|бесишь)', lower) is not None
+    is_question = '?' in user_msg or re.search(r'\b(почему|зачем|кто|где|когда)\b', lower) is not None
     taboos = char.get('taboo_topics', [])
     STOPWORDS = {'и', 'в', 'на', 'с', 'у', 'о', 'не', 'а', 'но', 'да', 'к', 'по', 'из', 'от', 'для', 'без', 'над', 'под', 'об', 'про', 'до', 'за', 'при', 'или', 'ни', 'то', 'же', 'бы', 'ли', 'если', 'что', 'как', '—', '-'}
     lower_words = set(w.strip('.,!?()[]{}«»""'':;') for w in lower.split())

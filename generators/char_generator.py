@@ -8,7 +8,8 @@ from datetime import datetime, timedelta
 from generators.char_data import (
     male_names, female_names, male_surnames, female_surnames, cities,
     eye_colors, hair_colors, hair_lengths, body_types, skin_tones,
-    positive_traits, negative_traits, hobbies_male, hobbies_female,
+    positive_traits, negative_traits, positive_trait_dims, negative_trait_dims,
+    hobbies_male, hobbies_female,
     profession_groups, profession_education_map, favorite_colors_pool,
     favorite_drinks_pool, favorite_music_pool,
     movie_genres_pool, book_genres_pool, fetish_categories, fetishes_pool,
@@ -24,7 +25,8 @@ from generators.char_data import (
     supernatural_beliefs_pool,
     writing_styles, rp_ability_profiles,
     entry_contexts, current_situations_pool, current_moods_pool,
-    hidden_motives_pool, chat_openers_pool, skip_factors_pool,
+    hidden_motives_pool, chat_openers_pool, chat_openers_male_pool,
+    chat_openers_female_pool, skip_factors_pool,
     harassment_reactions_pool, fav_topics_pool, taboo_topics_pool,
     lying_tendencies, oversharing_descriptions,
     foods_by_cost, wealth_to_food_cost,
@@ -66,7 +68,7 @@ def generate(seed=None, gender=None, age_group=None):
     age_profile = age_group_profiles[age_group]
 
     age = random.randint(min_age, max_age)
-    birth_year = 2026 - age
+    birth_year = datetime.now().year - age
     birth_date = datetime(birth_year, 1, 1) + timedelta(days=random.randint(0, 364))
     zodiac = zodiac_sign(birth_date.day, birth_date.month)
 
@@ -271,24 +273,28 @@ def generate(seed=None, gender=None, age_group=None):
     pos_weights = []
     for t in positive_traits:
         dim_match = 0
-        for dim, val in profile.items():
-            if dim[:3] in t[:3]:
-                dim_match += max(0, val)
+        for dim in positive_trait_dims.get(t, []):
+            dim_match += max(0, profile.get(dim, 0))
         pos_weights.append(max(0.1, 1 + dim_match))
-    negative_traits_selected = []
     neg_traits_list = list(negative_traits)
-    neg_weights = [max(0.1, 2 - (profile.get(t[:3], 0) if any(1 for k in profile if k[:3] == t[:3]) else 0)) for t in neg_traits_list]
-    positive_traits_selected = random.sample(
-        weighted_sample(positive_traits, pos_weights, 6), min(4, 6)
-    )
-    negative_traits_selected = random.sample(
-        weighted_sample(neg_traits_list, neg_weights, 4), min(3, 4)
-    )
+    neg_weights = []
+    for t in neg_traits_list:
+        dim_mismatch = 0
+        for dim in negative_trait_dims.get(t, []):
+            # Lower profile value in relevant dims => higher negative trait weight
+            dim_mismatch += max(0, -profile.get(dim, 0))
+        neg_weights.append(max(0.1, 1 + dim_mismatch))
+    positive_traits_selected = weighted_sample(positive_traits, pos_weights, min(4, 6))
+    negative_traits_selected = weighted_sample(neg_traits_list, neg_weights, min(3, 4))
 
     # --- Profession ---
     if age_group == 'teen':
-        profession = random.choice(age_group_professions['teen'])
-        profession_group_key = 'коммуникатор' if profession == 'курьер' else 'творец'
+        if age < 16:
+            profession = 'школьник'
+            profession_group_key = 'творец'
+        else:
+            profession = random.choice(age_group_professions['teen'])
+            profession_group_key = 'коммуникатор' if profession == 'курьер' else 'творец'
     elif age_group == 'young':
         young_profs = age_group_professions['young']
         if random.random() < 0.4:
@@ -346,7 +352,10 @@ def generate(seed=None, gender=None, age_group=None):
     else:
         education = random.choice(educ_pool)
     if 'студент' in profession:
-        education = 'неоконченное высшее'
+        if age < 17:
+            education = 'среднее'
+        else:
+            education = 'неоконченное высшее'
 
     # --- Languages (начинаем с русского, остальные редко) ---
     languages = ['русский']
@@ -451,14 +460,16 @@ def generate(seed=None, gender=None, age_group=None):
     # --- Fetishes (cascading: archetype + beauty + body_size → categories → items) ---
     fetish_config = age_group_fetishes[age_group]
     if fetish_config['allowed']:
-        # Build fetish boost from archetype + beauty + body_size
+        # Build fetish boost from archetype + beauty + body_size (multiplicative: 1 + sum of mods)
         fetish_boosts = {}
         for k, v in archetype_fetish_mods.get(archetype_name, {}).items():
-            fetish_boosts[k] = fetish_boosts.get(k, 1) + v
+            fetish_boosts[k] = fetish_boosts.get(k, 0) + v
         for k, v in beauty_fetish_mods.get(beauty, {}).items():
-            fetish_boosts[k] = fetish_boosts.get(k, 1) + v
+            fetish_boosts[k] = fetish_boosts.get(k, 0) + v
         for k, v in body_size_fetish_mods.get(body_size_key, {}).items():
-            fetish_boosts[k] = fetish_boosts.get(k, 1) + v
+            fetish_boosts[k] = fetish_boosts.get(k, 0) + v
+        # Convert additive boosts to multiplicative (1 + sum)
+        fetish_boosts = {k: max(0.1, 1 + v) for k, v in fetish_boosts.items()}
 
         # Build weights for all fetishes
         all_fetish_items = []
@@ -475,7 +486,7 @@ def generate(seed=None, gender=None, age_group=None):
                 for dim, val in f_data.items():
                     if dim in profile_normalized:
                         w *= max(0.1, 1 + profile_normalized[dim] * val / 100)
-                # Archetype/beauty/body boosts
+                # Archetype/beauty/body boosts (multiplicative, pre-normalized to 1+sum)
                 for boost_dim, boost_val in fetish_boosts.items():
                     if boost_dim in f_data:
                         w *= boost_val
@@ -762,9 +773,17 @@ def generate(seed=None, gender=None, age_group=None):
         list(mood_weights.values()),
     )
     hidden_motive = random.choice(hidden_motives_pool)
+    if gender == 'male':
+        opener_pool = chat_openers_pool + chat_openers_male_pool
+        # Убираем женские варианты из пула
+        opener_pool = [o for o in opener_pool if not o[0].lower().startswith('д ')]
+    else:
+        opener_pool = chat_openers_pool + chat_openers_female_pool
+        # Убираем мужские варианты из пула
+        opener_pool = [o for o in opener_pool if not o[0].lower().startswith('м ')]
     chat_opener = weighted_choice(
-        [o[0] for o in chat_openers_pool],
-        [o[1] for o in chat_openers_pool],
+        [o[0] for o in opener_pool],
+        [o[1] for o in opener_pool],
     )
     skip_count = random.randint(1, 3)
     skip_factors = random.sample(skip_factors_pool, min(skip_count, len(skip_factors_pool)))
