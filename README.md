@@ -88,21 +88,6 @@ AGENT_RECONNECT_DELAY=60
 | `GET` | `/api/online` | Количество людей онлайн |
 | `POST` | `/api/agent/poll` | Polling для agent mode |
 
-## Архитектура
-
-| Файл | Роль |
-|---|---|
-| `app.py` | Flask-приложение: генерация, чат, online-симулятор, OpenAI API |
-| `templates/index.html` | Single-page интерфейс |
-| `static/js/script.js` | Клиентская логика |
-| `static/css/style.css` | Стили (ночная/дневная тема) |
-| `generators/char_generator.py` | Генератор персонажа |
-| `generators/char_model.py` | Pydantic-модель персонажа |
-| `generators/char_data.py` | Пулы данных |
-| `generators/char_profiles.py` | Архетипы, зодиаки, профессии |
-| `generators/char_appearance.py` | Генератор внешности |
-| `generators/char_bio.py` | Генератор биографии |
-
 ## Генерация персонажа
 
 7-уровневая архитектура генерации:
