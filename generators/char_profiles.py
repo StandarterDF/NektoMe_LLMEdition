@@ -424,8 +424,8 @@ archetype_profession_groups = {
 age_groups = {
     'teen': {'min': 13, 'max': 17, 'label': 'Подростковый'},
     'young': {'min': 18, 'max': 21, 'label': 'Юный'},
-    'adult': {'min': 22, 'max': 35, 'label': 'Взрослый'},
-    'mature': {'min': 36, 'max': 65, 'label': 'Зрелый'},
+    'adult': {'min': 22, 'max': 25, 'label': 'Взрослый'},
+    'mature': {'min': 26, 'max': 40, 'label': 'Зрелый'},
 }
 
 age_group_profiles = {

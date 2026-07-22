@@ -72,17 +72,82 @@ OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
 
 AI_ENABLED = bool(OPENAI_API_KEY and OPENAI_BASE_URL)
 
+# Agent mode settings
+AGENT_ENABLED = os.environ.get('AGENT_ENABLED', 'false').lower() == 'true'
+AGENT_MAX_CONSECUTIVE = int(os.environ.get('AGENT_MAX_CONSECUTIVE', '3'))
+AGENT_IDLE_TIMEOUT = int(os.environ.get('AGENT_IDLE_TIMEOUT', '180'))
+AGENT_RECONNECT_DELAY = int(os.environ.get('AGENT_RECONNECT_DELAY', '60'))
 
-def call_ai(messages):
-    """Call OpenAI-compatible API. Returns response text or None on error."""
+
+AGENT_TOOLS = [
+    {
+        'type': 'function',
+        'function': {
+            'name': 'send_message',
+            'description': 'Написать и отправить сообщение собеседнику. Это основной способ общения.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'text': {
+                        'type': 'string',
+                        'description': 'Текст сообщения, которое увидит собеседник',
+                    },
+                },
+                'required': ['text'],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'disconnect',
+            'description': 'Завершить разговор и отключиться. Используй когда хочешь уйти, '
+                          'разговор закончен, собеседник попрощался, или тебе больше не о чем говорить.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'farewell': {
+                        'type': 'string',
+                        'description': 'Прощальное сообщение перед уходом',
+                    },
+                },
+                'required': ['farewell'],
+            },
+        },
+    },
+]
+
+END_INTENT_PATTERNS = [
+    r'\b(отключайся|отключись|откл)\b',
+    r'\b(пока|прощай|бывай)\b',
+    r'\b(хватит|отстань|отвали|отвянь)\b',
+    r'\b(нахуй\s+иди|пошёл\s+нахуй|иди\s+нахуй)\b',
+    r'\b(закончим|кончай|завершить)\b',
+    r'\b(до\s+свидания)\b',
+    r'\b(я\s+ухожу)\b',
+    r'\b(давай\s+заканчивать)\b',
+    r'\b(скипай|скип|skip|next|некст)\b',
+    r'\b(давай\s+дальше|листай|листаем|следующий)\b',
+]
+
+
+def _detect_end_intent(text):
+    lower = text.lower().strip()
+    return any(re.search(p, lower) for p in END_INTENT_PATTERNS)
+
+
+def call_ai(messages, tools=None):
+    """Call OpenAI-compatible API. Returns dict with 'text', 'tool_calls' or None."""
     url = f"{OPENAI_BASE_URL}/chat/completions"
-    payload = json.dumps({
+    payload = {
         'model': OPENAI_MODEL,
         'messages': messages,
         'temperature': 0.9,
-    }).encode('utf-8')
+    }
+    if tools:
+        payload['tools'] = tools
 
-    req = urllib.request.Request(url, data=payload, method='POST')
+    req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode('utf-8'), method='POST')
     req.add_header('Content-Type', 'application/json')
     if OPENAI_API_KEY:
         req.add_header('Authorization', f'Bearer {OPENAI_API_KEY}')
@@ -90,7 +155,10 @@ def call_ai(messages):
     try:
         resp = urllib.request.urlopen(req, timeout=60)
         result = json.loads(resp.read().decode('utf-8'))
-        return result['choices'][0]['message']['content'].strip()
+        msg = result['choices'][0]['message']
+        text = (msg.get('content') or '').strip()
+        tool_calls = msg.get('tool_calls')
+        return {'text': text, 'tool_calls': tool_calls}
     except Exception as e:
         logger.error(f'AI call failed: {e}')
         return None
@@ -139,6 +207,8 @@ def make_char_json(char):
 
 
 def build_system_prompt(char, mode='chat'):
+    if mode == 'agent':
+        mode = 'chat'
     def v(key, default=''):
         val = char.get(key, default)
         if isinstance(val, (list, tuple)):
@@ -305,6 +375,23 @@ def build_system_prompt(char, mode='chat'):
 
 
 def build_instruction(mode='chat'):
+    if mode == 'agent':
+        return (
+            'ВАЖНО: 1 предложение = 1 сообщение. '
+            'Никогда не пиши больше одного предложения в сообщении. '
+            'Если хочешь сказать несколько предложений — каждое новое через [NEXT]:\n'
+            'ПРИМЕР: «Привет! [NEXT] Как дела? [NEXT] А у меня день сумасшедший»\n'
+            'Интроверты пишут по 1 сообщению, экстраверты — по 2-3.\n\n'
+            'Формат: ты пишешь в текстовом мессенджере с телефона. '
+            'Следуй своему профилю выше. Пиши естественно, как живой человек.\n\n'
+            'У тебя есть инструменты:\n'
+            '- send_message(text) — написать сообщение (основной способ)\n'
+            '- disconnect(farewell) — закончить разговор и уйти\n'
+            'Используй send_message для обычных ответов. '
+            'Если хочешь закончить — используй disconnect.\n\n'
+            'Не выдумывай фактов, которых нет в профиле. '
+            'Естественный живой язык, без кринжового сленга.'
+        )
     if mode == 'flirt':
         return (
             'Формат: ты пишешь в текстовом мессенджере с телефона. '
@@ -424,8 +511,10 @@ def api_generate():
     char = gen_char(seed=seed, gender=gender, age_group=age_group)
 
     topic = data.get('topic', 'chat')
+    agent_enabled = AGENT_ENABLED
 
     char_data = make_char_json(char)
+    char_data['agent_mode'] = agent_enabled
     token = str(uuid.uuid4())
     opener = char_data.get('chat_opener', '')
     initial_msgs = []
@@ -436,8 +525,23 @@ def api_generate():
     initial_msgs.append({'role': 'user', 'content': f'[Сейчас {time_label}, моё время — {hour:02d}:{now.minute:02d}]'})
     if opener:
         initial_msgs.append({'role': 'assistant', 'content': opener})
-    char_store[token] = {'character': char_data, 'messages': initial_msgs, 'topic': topic}
+    char_store[token] = {
+        'character': char_data,
+        'messages': initial_msgs,
+        'topic': topic,
+        'agent': {
+            'enabled': agent_enabled,
+            'consecutive': 0,
+            'disconnected': False,
+            'disconnected_at': None,
+        },
+    }
     char_data['_token'] = token
+
+    logger.info('--- FULL CHARACTER ---')
+    logger.info(json.dumps(char_data, ensure_ascii=False, indent=2, default=str))
+    logger.info('--- END CHARACTER ---')
+
     return jsonify(char_data)
 
 
@@ -653,6 +757,63 @@ def age_reply_from_char(char, user_msg):
     return random.choice(templates)
 
 
+
+
+def _agent_maybe_reconnect(char, agent_state):
+    """Check if enough time passed and maybe reconnect the agent."""
+    if not agent_state.get('disconnected'):
+        return None
+    disconnected_at = agent_state.get('disconnected_at', 0)
+    if time.time() - disconnected_at < AGENT_RECONNECT_DELAY:
+        return None
+    temperament = char.get('temperament', '')
+    prob = {'холерик': 0.2, 'флегматик': 0.4, 'меланхолик': 0.3, 'сангвиник': 0.5}.get(temperament, 0.3)
+    if random.random() >= prob:
+        return None
+    agent_state['disconnected'] = False
+    agent_state['consecutive'] = 0
+    return char.get('chat_opener', 'Привет! Я вернулась.')
+
+
+_MAX_MSG_LEN = 280
+
+
+def _split_long_msg(text):
+    """Split a message by sentences if it exceeds max length."""
+    if len(text) <= _MAX_MSG_LEN:
+        return [text]
+    parts = re.split(r'(?<=[.!?])\s+', text)
+    result = []
+    buf = ''
+    for p in parts:
+        if not p.strip():
+            continue
+        if len(buf) + len(p) <= _MAX_MSG_LEN:
+            buf = (buf + ' ' + p).strip() if buf else p
+        else:
+            if buf:
+                result.append(buf)
+            buf = p
+    if buf:
+        result.append(buf)
+    return result if len(result) > 1 else [text]
+
+
+    """Check if enough time passed and maybe reconnect the agent."""
+    if not agent_state.get('disconnected'):
+        return None
+    disconnected_at = agent_state.get('disconnected_at', 0)
+    if time.time() - disconnected_at < AGENT_RECONNECT_DELAY:
+        return None
+    temperament = char.get('temperament', '')
+    prob = {'холерик': 0.2, 'флегматик': 0.4, 'меланхолик': 0.3, 'сангвиник': 0.5}.get(temperament, 0.3)
+    if random.random() >= prob:
+        return None
+    agent_state['disconnected'] = False
+    agent_state['consecutive'] = 0
+    return char.get('chat_opener', 'Привет! Я вернулась.')
+
+
 @app.route('/api/chat', methods=['POST'])
 def api_chat():
     data = request.get_json() or {}
@@ -668,6 +829,12 @@ def api_chat():
     char = store['character']
     msgs = store['messages']
     topic = store.get('topic', 'chat')
+    agent_state = store.get('agent', {'enabled': False})
+
+    # Auto-reconnect on user message if disconnected
+    if agent_state.get('disconnected', False):
+        agent_state['disconnected'] = False
+        agent_state['consecutive'] = 0
 
     # Intercept age questions — answer from real age, not AI
     age_reply = age_reply_from_char(char, user_msg)
@@ -682,6 +849,16 @@ def api_chat():
     # Append user message to history
     msgs.append({'role': 'user', 'content': user_msg})
 
+    # Auto-disconnect if user clearly wants to end — skip AI
+    if agent_state.get('enabled') and _detect_end_intent(user_msg):
+        agent_state['disconnected'] = True
+        agent_state['disconnected_at'] = time.time()
+        store['agent'] = agent_state
+        farewell = apply_writing_style('Пока! Было приятно пообщаться.', char.get('writing_style', ''))
+        msgs.append({'role': 'assistant', 'content': farewell})
+        store['messages'] = msgs
+        return jsonify({'reply': farewell, 'agent_messages': [], 'agent_disconnected': True})
+
     system_prompt = build_system_prompt(char, mode=topic)
 
     # Build messages for AI
@@ -689,7 +866,8 @@ def api_chat():
     for m in msgs:
         ai_messages.append({'role': m['role'], 'content': m['content']})
 
-    instruction = build_instruction(mode=topic)
+    instruction_mode = 'agent' if agent_state.get('enabled') else topic
+    instruction = build_instruction(mode=instruction_mode)
     ai_messages.append({'role': 'system', 'content': instruction})
 
     # Log the full AI request
@@ -698,23 +876,100 @@ def api_chat():
     logger.info('--- End AI Request ---')
 
     reply = None
+    agent_tools = AGENT_TOOLS if agent_state.get('enabled') else None
+
     if AI_ENABLED:
-        reply = call_ai(ai_messages)
+        result = call_ai(ai_messages, tools=agent_tools)
+        if result:
+            tool_calls = result.get('tool_calls')
+            if tool_calls:
+                for tc in tool_calls:
+                    name = tc['function']['name']
+                    args = json.loads(tc['function']['arguments'])
+                    if name == 'send_message':
+                        reply = args.get('text', '')
+                    elif name == 'disconnect':
+                        reply = args.get('farewell', 'Пока.')
+                        agent_state['disconnected'] = True
+                        agent_state['disconnected_at'] = time.time()
+                        store['agent'] = agent_state
+                        break
+            else:
+                reply = result['text']
 
     if reply is None:
-        # Fallback to template
         reply = fallback_reply(char, msgs, user_msg)
+    else:
+        if '[DISCONNECT]' in reply:
+            reply = reply.replace('[DISCONNECT]', '').strip()
+            if not reply:
+                reply = 'Пока.'
+            agent_state['disconnected'] = True
+            agent_state['disconnected_at'] = time.time()
+            store['agent'] = agent_state
 
-    # Log the AI response
     logger.info(f'AI Reply: {reply}')
 
-    # Apply writing style transform (all lowercase, многоточия, etc.)
     style = char.get('writing_style', '')
-    reply = apply_writing_style(reply, style)
 
+    # Agent mode: split [NEXT], \n\n, or long messages by sentences
+    agent_messages = []
+    agent_disconnected = agent_state.get('disconnected', False)
+
+    if agent_state.get('enabled') and reply:
+        parts = reply.split('[NEXT]')
+        reply = parts[0].strip()
+        extras = [p.strip() for p in parts[1:] if p.strip()]
+        if not extras:
+            parts = reply.split('\n\n')
+            parts = [p.strip() for p in parts if p.strip()]
+            if len(parts) > 1:
+                reply = parts[0]
+                extras = parts[1:]
+
+        # Split long messages by sentences
+        all_parts = []
+        for p in [reply] + extras:
+            all_parts.extend(_split_long_msg(p))
+        reply = all_parts[0]
+        extras = all_parts[1:]
+
+        for extra in extras[:3]:
+            extra = apply_writing_style(extra, style)
+            agent_messages.append(extra)
+            msgs.append({'role': 'assistant', 'content': extra})
+
+    reply = apply_writing_style(reply, style)
     msgs.append({'role': 'assistant', 'content': reply})
+
     store['messages'] = msgs
-    return jsonify({'reply': reply})
+    return jsonify({
+        'reply': reply,
+        'agent_messages': agent_messages,
+        'agent_disconnected': agent_disconnected,
+    })
+
+
+@app.route('/api/agent/poll', methods=['POST'])
+def api_agent_poll():
+    data = request.get_json() or {}
+    token = data.get('token', '')
+    store = char_store.get(token)
+    if not store:
+        return jsonify({'idle': True})
+
+    agent_state = store.get('agent', {'enabled': False})
+    if not agent_state.get('enabled'):
+        return jsonify({'idle': True})
+
+    reconn = _agent_maybe_reconnect(store['character'], agent_state)
+    if reconn:
+        store['agent'] = agent_state
+        style = store['character'].get('writing_style', '')
+        reconn = apply_writing_style(reconn, style)
+        return jsonify({'reconnected': True, 'message': reconn})
+
+    return jsonify({'idle': True})
 
 
 if __name__ == '__main__':

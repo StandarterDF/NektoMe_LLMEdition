@@ -101,7 +101,6 @@ document.addEventListener('DOMContentLoaded', function () {
         } else if (topic === 'rp') {
             step.classList.add('roles_topic_search');
         }
-
         // Age restrictions: flirt = no under 18
         var ownTeen = document.querySelector('#ownAgeGroup button[data-age="teen"]');
         var partnerTeen = document.querySelector('#partnerAgeGroup button[data-age="teen"]');
@@ -196,6 +195,74 @@ document.addEventListener('DOMContentLoaded', function () {
                 scrollChatToBottom();
             }, 300);
         });
+    }
+
+    function showAgentDisconnected() {
+        var chatMessages = document.getElementById('chat_messages');
+        var block = document.createElement('div');
+        block.className = 'mess_block system';
+        var inner = document.createElement('div');
+        inner.style.cssText = 'text-align:center;color:var(--night-chat-message-time-color);font-size:12px;padding:10px 0;';
+        inner.textContent = '✕ Собеседник отключился';
+        block.appendChild(inner);
+        chatMessages.appendChild(block);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        showTalkOver();
+        sendBtn.disabled = true;
+        stopAgentPolling();
+    }
+
+    function showAgentReconnected() {
+        showInput();
+        sendBtn.disabled = false;
+    }
+
+    var agentPollInterval = null;
+
+    function startAgentPolling() {
+        stopAgentPolling();
+        agentPollInterval = setInterval(function () {
+            var token = currentChar ? currentChar._token : '';
+            if (!token) return;
+            fetch('/api/agent/poll', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: token })
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.reconnected) {
+                    showAgentReconnected();
+                    addMessage(data.message, 'nekto');
+                }
+            })
+            .catch(function () {});
+        }, 5000);
+    }
+
+    function stopAgentPolling() {
+        if (agentPollInterval) {
+            clearInterval(agentPollInterval);
+            agentPollInterval = null;
+        }
+    }
+
+    function showAgentMessagesSequentially(messages, index, done) {
+        if (!messages || index >= messages.length) {
+            if (done) done();
+            return;
+        }
+        var typing = document.getElementById('typing_indicator');
+        if (typing) typing.style.display = 'block';
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        var delay = 800 + Math.random() * 1200;
+        setTimeout(function () {
+            if (typing) typing.style.display = 'none';
+            addMessage(messages[index], 'nekto');
+            setTimeout(function () {
+                showAgentMessagesSequentially(messages, index + 1, done);
+            }, 500 + Math.random() * 1000);
+        }, delay);
     }
 
     function showStep(stepId) {
@@ -329,11 +396,17 @@ document.addEventListener('DOMContentLoaded', function () {
 
                 var chatMessages = document.getElementById('chat_messages');
                 chatMessages.innerHTML = '';
+                stopAgentPolling();
 
                 // Show opener after brief delay
                 var opener = char.chat_opener || 'Привет!';
                 setTimeout(function () {
-                    if (!searchCancelled) addMessage(opener, 'nekto');
+                    if (!searchCancelled) {
+                        addMessage(opener, 'nekto');
+                        if (char.agent_mode) {
+                            startAgentPolling();
+                        }
+                    }
                 }, 300);
             }, wait);
         })
@@ -357,6 +430,7 @@ document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('headerChatMode').style.display = 'block';
         showStep('searchStep');
         startOnlinePolling();
+        stopAgentPolling();
     });
 
     // --- CHAT ---
@@ -389,9 +463,23 @@ document.addEventListener('DOMContentLoaded', function () {
         .then(function (r) { return r.json(); })
         .then(function (data) {
             if (typing) typing.style.display = 'none';
+
+            // Main reply
             if (data.reply) {
                 addMessage(data.reply, 'nekto');
             }
+
+            // Agent's additional messages (one by one with typing indicator)
+            if (data.agent_messages && data.agent_messages.length > 0) {
+                showAgentMessagesSequentially(data.agent_messages, 0, function () {
+                    if (data.agent_disconnected) {
+                        showAgentDisconnected();
+                    }
+                });
+            } else if (data.agent_disconnected) {
+                showAgentDisconnected();
+            }
+
             sendBtn.disabled = false;
             msgInput.focus();
         })
@@ -443,6 +531,7 @@ document.addEventListener('DOMContentLoaded', function () {
         showStep('searchStep');
         document.getElementById('chat_box').classList.remove('chat-mode');
         startOnlinePolling();
+        stopAgentPolling();
     }
 
     // End chat modal
@@ -454,6 +543,7 @@ document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('endChatModal').style.display = 'none';
         showTalkOver();
         document.getElementById('sendMessageBtn').disabled = true;
+        stopAgentPolling();
     });
 
     document.getElementById('modalEndNo').addEventListener('click', function () {

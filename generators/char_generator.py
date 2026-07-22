@@ -60,7 +60,7 @@ def generate(seed=None, gender=None, age_group=None):
     if age_group is None:
         age_group = weighted_choice(
             age_group_names,
-            [45, 30, 18, 7]   # teen=45%, young=30%, adult=18%, mature=7%
+            [42, 42, 12, 4]   # teen=42%, young=42%, adult=12%, mature=4%
         )
 
     age_group_info = age_groups[age_group]
@@ -743,7 +743,7 @@ def generate(seed=None, gender=None, age_group=None):
     writing_style = random.choice(writing_styles)['name']
     rp_level = weighted_choice(
         [r['level'] for r in rp_ability_profiles],
-        [40, 30, 20, 10],
+        [88, 6, 4, 2],
     )
     rp_ability = rp_level in ('активный рп', 'профи рп')
     entry_context = random.choice(entry_contexts)
