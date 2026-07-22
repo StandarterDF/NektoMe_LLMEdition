@@ -78,6 +78,12 @@ AGENT_IDLE_TIMEOUT=180
 AGENT_RECONNECT_DELAY=60
 ```
 
+## Web UI
+
+| Светлая тема | Тёмная тема |
+|---|---|
+| <img alt="Светлая тема" src="static/WEB_WHITE.JPG" width="450"> | <img alt="Тёмная тема" src="static/WEB_BLACK.JPG" width="450"> |
+
 ## API Routes
 
 | Метод | Путь | Описание |
