@@ -936,11 +936,9 @@ def generate(seed=None, gender=None, age_group=None, topic=None):
         hidden_motive = weighted_choice(list(rp_motive_weights.keys()), list(rp_motive_weights.values()))
     if gender == 'male':
         opener_pool = chat_openers_pool + chat_openers_male_pool
-        # Убираем женские варианты из пула
         opener_pool = [o for o in opener_pool if not o[0].lower().startswith('д ')]
     else:
         opener_pool = chat_openers_pool + chat_openers_female_pool
-        # Убираем мужские варианты из пула
         opener_pool = [o for o in opener_pool if not o[0].lower().startswith('м ')]
     if topic == 'flirt':
         opener_pool = opener_pool + chat_openers_flirt_pool
@@ -948,6 +946,35 @@ def generate(seed=None, gender=None, age_group=None, topic=None):
         opener_pool = opener_pool + chat_openers_rp_pool
         if random.random() < 0.1:
             opener_pool = opener_pool + chat_openers_flirt_pool
+    literacy_score = 0.5
+    if education in ('высшее (бакалавриат)', 'высшее (магистратура)',
+                     'неоконченное высшее', 'два высших', 'учёная степень', 'аспирантура'):
+        literacy_score += 0.2
+    elif education == 'среднее':
+        literacy_score -= 0.1
+    if writing_style in ('идеальная грамотность', '~эстет~'):
+        literacy_score += 0.25
+    elif writing_style in ('all lowercase', 'куча опечаток'):
+        literacy_score -= 0.25
+    elif writing_style == 'без запятых':
+        literacy_score -= 0.15
+    _broken_words = {'пр', 'Пр', 'прт', 'пп', 'привте', 'приве', 'приает',
+                     'привч', 'ghbdtn', 'qq', 'Qq', 'q', 'ку ёпта', 'хаю хай'}
+    _broken_punct = {'.', '...', '!', '.)'}
+    def _is_broken(text):
+        t = text.strip().rstrip(')!')
+        return t in _broken_words or text.strip() in _broken_punct
+    _formal_prefixes = ('Здравствуйте', 'Добрый день', 'Добрый вечер',
+                        'Доброе утро', 'Доброй ночи', 'Доброго времени суток',
+                        'Приветствую', 'здравия желаю')
+    def _is_formal(text):
+        return text.strip().startswith(_formal_prefixes)
+    if literacy_score >= 0.7:
+        opener_pool = [o for o in opener_pool if not _is_broken(o[0])]
+    elif literacy_score <= 0.35:
+        opener_pool = [o for o in opener_pool if not _is_formal(o[0])]
+    if not opener_pool:
+        opener_pool = [('Привет', 1)]
     chat_opener = weighted_choice(
         [o[0] for o in opener_pool],
         [o[1] for o in opener_pool],

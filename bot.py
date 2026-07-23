@@ -4,53 +4,22 @@ import uuid
 import os
 import re
 import sys
+import asyncio
 import urllib.request
 import logging
-import threading
-import math
 import time
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+
 from generators.char_generator import generate as gen_char
 
-app = Flask(__name__)
-
-# --- Online count simulation ---
-def _online_init():
-    hour = time.localtime().tm_hour
-    hour_angle = (hour - 14) * 2 * math.pi / 24
-    day_factor = (math.cos(hour_angle) + 1) / 2
-    target = 1500 + day_factor * 10500
-    return random.uniform(target * 0.85, target * 1.15)
-
-online_count = _online_init()
-online_lock = threading.Lock()
-
-def online_simulator():
-    global online_count
-    tick = 0
-    while True:
-        time.sleep(1)
-        tick += 1
-        hour = time.localtime().tm_hour
-
-        hour_angle = (hour - 14) * 2 * math.pi / 24
-        day_factor = (math.cos(hour_angle) + 1) / 2
-        target = 1500 + day_factor * 10500
-
-        with online_lock:
-            diff = target - online_count
-            step = random.gauss(0, 0.2) + diff * 0.000001
-            online_count += step
-            online_count = max(100, min(20000, online_count))
-
-threading.Thread(target=online_simulator, daemon=True).start()
-app.secret_key = 'nektome-ai-chat-secret-2026'
-
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)-7s | %(message)s')
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('httpcore').setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# --- Load .env manually ---
 def load_env():
     env_path = os.path.join(os.path.dirname(__file__), '.env')
     if not os.path.exists(env_path):
@@ -66,71 +35,87 @@ def load_env():
 
 load_env()
 
+BOT_TOKEN = os.environ.get('BOT_TOKEN', '')
 OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', '').rstrip('/')
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
-
-
 AI_ENABLED = bool(OPENAI_API_KEY and OPENAI_BASE_URL)
 
-# Agent mode settings
 AGENT_ENABLED = os.environ.get('AGENT_ENABLED', 'false').lower() == 'true'
 AGENT_MAX_CONSECUTIVE = int(os.environ.get('AGENT_MAX_CONSECUTIVE', '3'))
 AGENT_IDLE_TIMEOUT = int(os.environ.get('AGENT_IDLE_TIMEOUT', '180'))
 AGENT_RECONNECT_DELAY = int(os.environ.get('AGENT_RECONNECT_DELAY', '60'))
 
+if not BOT_TOKEN:
+    logger.error('BOT_TOKEN not set in .env')
+    sys.exit(1)
 
-AGENT_TOOLS = [
-    {
-        'type': 'function',
-        'function': {
-            'name': 'send_message',
-            'description': 'Написать и отправить сообщение собеседнику. Это основной способ общения.',
-            'parameters': {
-                'type': 'object',
-                'properties': {
-                    'text': {
-                        'type': 'string',
-                        'description': 'Текст сообщения, которое увидит собеседник',
-                    },
-                },
-                'required': ['text'],
-            },
-        },
-    },
-]
+ALLOWED_IDS_STR = os.environ.get('ALLOWED_IDS', '')
+ALLOWED_IDS = set()
+if ALLOWED_IDS_STR:
+    for part in ALLOWED_IDS_STR.split(','):
+        part = part.strip()
+        if part:
+            try:
+                ALLOWED_IDS.add(int(part))
+            except ValueError:
+                pass
 
-def call_ai(messages, tools=None):
-    """Call OpenAI-compatible API. Returns dict with 'text', 'tool_calls' or None."""
+def is_allowed(user_id):
+    return not ALLOWED_IDS or user_id in ALLOWED_IDS
+
+user_data = {}
+DATA_FILE = os.path.join(os.path.dirname(__file__), 'bot_data.json')
+
+def save_user_data():
+    try:
+        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(user_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f'Failed to save user data: {e}')
+
+def load_user_data():
+    global user_data
+    if not os.path.exists(DATA_FILE):
+        return
+    try:
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            loaded = json.load(f)
+        for uid, data in loaded.items():
+            uid = int(uid)
+            if uid not in user_data:
+                user_data[uid] = data
+                user_data[uid].setdefault('settings', {
+                    'partner_gender': 'any',
+                    'partner_age': [],
+                    'own_gender': 'any',
+                    'topic': 'chat',
+                })
+    except Exception as e:
+        logger.error(f'Failed to load user data: {e}')
+
+load_user_data()
+
+def call_ai(messages):
     url = f"{OPENAI_BASE_URL}/chat/completions"
     payload = {
         'model': OPENAI_MODEL,
         'messages': messages,
         'temperature': 0.9,
     }
-    if tools:
-        payload['tools'] = tools
-
     req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode('utf-8'), method='POST')
     req.add_header('Content-Type', 'application/json')
     if OPENAI_API_KEY:
         req.add_header('Authorization', f'Bearer {OPENAI_API_KEY}')
-
     try:
         resp = urllib.request.urlopen(req, timeout=60)
         result = json.loads(resp.read().decode('utf-8'))
         msg = result['choices'][0]['message']
         text = (msg.get('content') or '').strip()
-        tool_calls = msg.get('tool_calls')
-        return {'text': text, 'tool_calls': tool_calls}
+        return text
     except Exception as e:
         logger.error(f'AI call failed: {e}')
         return None
-
-
-# In-memory character store (keyed by session token)
-char_store = {}
-
 
 def make_char_json(char):
     d = {}
@@ -169,10 +154,7 @@ def make_char_json(char):
             d[field] = v
     return d
 
-
 def build_system_prompt(char, mode='chat', user_gender=None):
-    if mode == 'agent':
-        mode = 'chat'
     def v(key, default=''):
         val = char.get(key, default)
         if isinstance(val, (list, tuple)):
@@ -354,38 +336,23 @@ def build_system_prompt(char, mode='chat', user_gender=None):
             lines.append(f'{v("name")}: Ой, ну я вчера такое видела! Короче, иду я по парку, и тут...')
     return '\n'.join(lines)
 
-
-def build_instruction(mode='chat', user_gender=None):
+def build_instruction(mode='chat', user_gender=None, oversharing=5):
     gender_hint = ''
     if user_gender == 'male':
         gender_hint = '\nВАЖНО: Твой собеседник — мужчина. Если он представится женским именем — это странно, отреагируй на это.\n'
     elif user_gender == 'female':
         gender_hint = '\nВАЖНО: Твой собеседник — женщина.\n'
 
-    if mode == 'agent':
-        return (
-            gender_hint +
-            'ВАЖНО: 1 предложение = 1 сообщение. '
-            'Никогда не пиши больше одного предложения в сообщении. '
-            'Если хочешь сказать несколько предложений — каждое новое через [NEXT]:\n'
-            'ПРИМЕР: «Привет! [NEXT] Как дела? [NEXT] А у меня день сумасшедший»\n'
-            'Интроверты пишут по 1 сообщению, экстраверты — по 2-3.\n\n'
-            'Формат: ты пишешь в текстовом мессенджере с телефона. '
-            'Следуй своему профилю выше. Пиши естественно, как живой человек.\n\n'
-            'У тебя есть инструмент:\n'
-            '- send_message(text) — написать сообщение (основной способ)\n'
-            'Используй send_message для обычных ответов. '
-            'Если хочешь закончить разговор — добавь в конец сообщения токен [DISCONNECT].\n'
-            'Пример: «Пока! Было приятно пообщаться. [DISCONNECT]»\n\n'
-            'Не выдумывай фактов, которых нет в профиле. '
-            'Естественный живой язык, без кринжового сленга.'
-        )
     if mode == 'flirt':
         return (
             gender_hint +
             'Формат: ты пишешь в текстовом мессенджере с телефона. '
             'Следуй своему профилю выше. Пиши МАКСИМУМ 15-25 слов (1-3 предложения). '
             'Можешь разделять сообщения через [NEXT], чтобы отправить два сообщения подряд с паузой. '
+            'Если хочешь закончить разговор — добавь в конец токен [DISCONNECT]. '
+            'Пример: «Пока! [DISCONNECT]»\n\n'
+            f'Твой уровень откровенности — {oversharing}/10. '
+            'Если не хочешь отвечать на личные вопросы — уклоняйся или переводи в пошлость.\n\n'
             'Не выдумывай факты, родственников или хобби, которых нет в профиле. '
             'Естественный живой язык, без кринжового сленга. '
             'ТВОЯ ЗАДАЧА: это режим для вирта и откровенных сексуальных разговоров. '
@@ -411,6 +378,10 @@ def build_instruction(mode='chat', user_gender=None):
             gender_hint +
             'Формат: ролевая игра в нарративном стиле. '
             'Следуй своему профилю выше. Пиши МАКСИМУМ 20-35 слов (2-4 предложения). '
+            'Можешь разделять действия через [NEXT] для паузы. '
+            'Если хочешь закончить разговор — добавь в конец токен [DISCONNECT].\n\n'
+            f'Твой уровень откровенности — {oversharing}/10. '
+            'Если персонаж не хочет отвечать на вопрос — он уклоняется или переводит тему.\n\n'
             'Не выдумывай факты, родственников или хобби, которых нет в профиле. '
             'ОБЯЗАТЕЛЬНО используй *звёздочки* для описания своих действий, эмоций, движений и окружения. '
             'Отвечай от первого лица, но действия описывай в третьем лице через * *. '
@@ -437,7 +408,11 @@ def build_instruction(mode='chat', user_gender=None):
             'Формат: ты пишешь в текстовом мессенджере с телефона. '
             'Следуй своему профилю выше. Пиши МАКСИМУМ 15-20 слов (1-2 предложения). '
             'Можешь разделять сообщения через [NEXT], чтобы отправить два сообщения подряд с паузой. '
-            'Например: «Привет! [NEXT] Как дела?» — это отправится как два отдельных сообщения.\n\n'
+            'Например: «Привет! [NEXT] Как дела?» — это отправится как два отдельных сообщения.\n'
+            'Если хочешь закончить разговор — добавь в конец токен [DISCONNECT]. '
+            'Пример: «Пока! [DISCONNECT]»\n\n'
+            f'Твой уровень откровенности — {oversharing}/10. Чем он ниже, тем чаще ты уклоняешься от личных вопросов (возраст, город, работа, отношения). '
+            'Если не хочешь отвечать — уклоняйся или меняй тему.\n\n'
             'Не выдумывай факты, родственников или хобби, которых нет в профиле. '
             'Не выдавай всё сразу — отвечай коротко и по делу. Задавай встречные вопросы. '
             'Естественный живой язык, без кринжового сленга ("о, классика", "ну ты даешь"). '
@@ -454,7 +429,6 @@ def build_instruction(mode='chat', user_gender=None):
             'assistant: [ОДИН факт из профиля + встречный вопрос]'
         )
 
-
 def partner_age_groups(ages):
     if not ages:
         return None
@@ -468,97 +442,53 @@ def partner_age_groups(ages):
     groups = [mapping.get(a) for a in ages if a in mapping]
     return random.choice(groups) if groups else None
 
+def _gender_adapt(text, char_gender):
+    if char_gender != 'Мужской':
+        return text
+    replacements = [
+        ('рада', 'рад'), ('Рада', 'Рад'),
+        ('согласна', 'согласен'), ('Согласна', 'Согласен'),
+        ('поспорила', 'поспорил'), ('думала', 'думал'),
+        ('сказала', 'сказал'), ('могла', 'мог'),
+        ('хотела', 'хотел'), ('видела', 'видел'),
+        ('была', 'был'), ('успела', 'успел'),
+        ('лгунья', 'лгун'), ('Лгунья', 'Лгун'),
+        ('ушла', 'ушёл'), ('пришла', 'пришёл'),
+        ('дождалась', 'дождался'), ('нашлась', 'нашёлся'),
+        ('стала', 'стал'), ('взялась', 'взялся'),
+        ('занялась', 'занялся'), ('включилась', 'включился'),
+        ('отвлеклась', 'отвлёкся'), ('смотрела', 'смотрел'),
+        ('сидела', 'сидел'), ('лежала', 'лежал'),
+        ('стояла', 'стоял'), ('молчала', 'молчал'),
+        ('писала', 'писал'), ('читала', 'читал'),
+        ('играла', 'играл'), ('спала', 'спал'),
+        ('ела', 'ел'), ('пила', 'пил'),
+        ('бежала', 'бежал'), ('летела', 'летел'),
+        ('плыла', 'плыл'), ('ждала', 'ждал'),
+        ('звала', 'звал'), ('просила', 'просил'),
+        ('давала', 'давал'), ('брала', 'брал'),
+        ('понимала', 'понимал'), ('знала', 'знал'),
+        ('любила', 'любил'), ('верила', 'верил'),
+        ('думала', 'думал'), ('решила', 'решил'),
+        ('спросила', 'спросил'), ('ответила', 'ответил'),
+        ('посмотрела', 'посмотрел'), ('увидела', 'увидел'),
+        ('услышала', 'услышал'), ('почувствовала', 'почувствовал'),
+        ('поняла', 'понял'), ('заметила', 'заметил'),
+        ('вспомнила', 'вспомнил'), ('забыла', 'забыл'),
+    ]
+    for fem, masc in replacements:
+        text = text.replace(fem, masc)
+    return text
 
-def user_age_group(age_label):
-    mapping = {
-        'до 17': 'teen',
-        'от 18 до 21': 'young',
-        'от 22 до 25': 'adult',
-        'от 26 до 35': 'adult',
-        'старше 36': 'mature',
-    }
-    return mapping.get(age_label, 'young')
+def apply_writing_style(text, style):
+    if style == 'all lowercase':
+        return text.lower()
+    elif style == 'ALL CAPS':
+        return text.upper()
+    elif style == 'без запятых':
+        return text.replace(',', '').replace('!', '').replace('?', '')
+    return text
 
-
-@app.route('/api/online')
-def api_online():
-    with online_lock:
-        count = round(online_count, 1)
-    return jsonify({'total': count})
-
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-
-@app.route('/api/generate', methods=['POST'])
-def api_generate():
-    data = request.get_json() or {}
-    partner_gender = data.get('partner_gender', '')
-    partner_age = data.get('partner_age', [])
-
-    gender = None
-    if partner_gender in ('М', 'male'):
-        gender = 'male'
-    elif partner_gender in ('Ж', 'female'):
-        gender = 'female'
-
-    user_gender = data.get('own_gender', 'any')
-    if user_gender == 'М':
-        user_gender = 'male'
-    elif user_gender == 'Ж':
-        user_gender = 'female'
-    else:
-        user_gender = None
-
-    age_group = partner_age_groups(partner_age) if partner_age else None
-
-    topic = data.get('topic', 'chat')
-
-    seed = random.randint(0, 2**31)
-    char = gen_char(seed=seed, gender=gender, age_group=age_group, topic=topic)
-    agent_enabled = AGENT_ENABLED
-
-    char_data = make_char_json(char)
-    char_data['user_gender'] = user_gender
-    char_data['agent_mode'] = agent_enabled
-    token = str(uuid.uuid4())
-    opener = char_data.get('chat_opener', '')
-    initial_msgs = []
-    # Send current time once so AI knows it's night/day
-    now = datetime.now()
-    hour = now.hour
-    time_label = 'ночь' if 0 <= hour < 6 else 'утро' if 6 <= hour < 12 else 'день' if 12 <= hour < 18 else 'вечер'
-    initial_msgs.append({'role': 'user', 'content': f'[Сейчас {time_label}, моё время — {hour:02d}:{now.minute:02d}]'})
-    if opener:
-        parts = [p.strip() for p in opener.split('[NEXT]') if p.strip()]
-        if not parts:
-            parts = [opener]
-        for part in parts:
-            initial_msgs.append({'role': 'assistant', 'content': part})
-    char_store[token] = {
-        'character': char_data,
-        'messages': initial_msgs,
-        'topic': topic,
-        'agent': {
-            'enabled': agent_enabled,
-            'consecutive': 0,
-            'disconnected': False,
-            'disconnected_at': None,
-        },
-    }
-    char_data['_token'] = token
-    char_data['_openers_count'] = len([m for m in initial_msgs if m['role'] == 'assistant'])
-
-    logger.info('--- FULL CHARACTER ---')
-    logger.info(json.dumps(char_data, ensure_ascii=False, indent=2, default=str))
-    logger.info('--- END CHARACTER ---')
-
-    return jsonify(char_data)
-
-
-# --- Template-based fallback (used when AI is not configured) ---
 STOCK_ANSWERS = {
     'глубокое недоверие и цинизм': {
         'greeting': 'Ну привет. Только давай без сюсюканья.',
@@ -631,27 +561,49 @@ OVERSHARING_PREFIXES = {
     10: ['Слушай, я всё расскажу!', 'Ок, сейчас будет исповедь!'],
 }
 
-
 def oversharing_intro(level):
     for lv in sorted(OVERSHARING_PREFIXES.keys(), reverse=True):
         if level >= lv:
             return random.choice(OVERSHARING_PREFIXES[lv])
     return ''
 
+EVASIVE_ANSWERS = [
+    'Не скажу, извини',
+    'Секрет',
+    'А тебе зачем?',
+    'Это личное',
+    'Я не хочу об этом говорить',
+    'Может, не надо?',
+    'Давай не об этом',
+    'Пропустим',
+    'Я не отвечу на этот вопрос',
+    'Без комментариев',
+    'Не люблю говорить о себе',
+    'Я пас',
+    'Давай сменим тему',
+    'Оставлю это при себе',
+]
 
-WRITING_STYLE_TRANSFORM = {
-    'all lowercase': lambda t: t.lower(),
-    'ALL CAPS': lambda t: t.upper(),
-    'без запятых': lambda t: t.replace(',', '').replace('!', '').replace('?', ''),
+PERSONAL_QUESTION_PATTERNS = [
+    (r'\b(сколько тебе лет|твой возраст|возраст|тебе сколько|старше|младше)\b', 'age'),
+    (r'\b(откуда ты|где ты жив[её]шь|твой город|из какого ты города|откуда)\b', 'city'),
+    (r'\b(где работаешь|кем работаешь|твоя профессия|кто по профессии|где трудишься)\b', 'profession'),
+    (r'\b(где учишься|где уч[иё]шься|твоя уч[её]ба)\b', 'education'),
+    (r'\b(как тебя зовут|тво[её] имя|как звать|как тво[её] имя|как называть)\b', 'name'),
+    (r'\b(есть парень|есть девушка|твой парень|твоя девушка|в отношениях|свобод[её]н|встречаешься)\b', 'relationship'),
+    (r'\b(покажи фото|фото|скинь фото|селфи|внешность|как выглядишь)\b', 'photo'),
+    (r'\b(номер телефона|телефон|позвони|звони|как связаться)\b', 'phone'),
+    (r'\b(адрес|где жив[её]шь|домашний адрес|где находишься)\b', 'address'),
+    (r'\b(фамилия|твоя фамилия|какая фамилия)\b', 'surname'),
+]
+
+LIYING_REPLIES = {
+    'честная': '',
+    'социальная маска': '(мысленно: «скажу нейтрально»)',
+    'приукрашивает мелочи': '(чуть приукрашивая)',
+    'играет роль': '',
+    'хроническая лгунья': '(придётся соврать)',
 }
-
-
-def apply_writing_style(text, style):
-    fn = WRITING_STYLE_TRANSFORM.get(style)
-    if fn:
-        return fn(text)
-    return text
-
 
 FAREWELL_POOL = [
     'Пока! Было приятно пообщаться.',
@@ -675,65 +627,12 @@ FAREWELL_POOL = [
     'Всё, бывай! Рада была познакомиться.',
 ]
 
-
-LIYING_REPLIES = {
-    'честная': '',
-    'социальная маска': '(мысленно: «скажу нейтрально»)',
-    'приукрашивает мелочи': '(чуть приукрашивая)',
-    'играет роль': '',
-    'хроническая лгунья': '(придётся соврать)',
-}
-
-
-def _gender_adapt(text, char_gender):
-    """Adapt feminine verb forms to masculine if character is male."""
-    if char_gender != 'Мужской':
-        return text
-    replacements = [
-        ('рада', 'рад'), ('Рада', 'Рад'),
-        ('согласна', 'согласен'), ('Согласна', 'Согласен'),
-        ('поспорила', 'поспорил'), ('думала', 'думал'),
-        ('сказала', 'сказал'), ('могла', 'мог'),
-        ('хотела', 'хотел'), ('видела', 'видел'),
-        ('была', 'был'), ('успела', 'успел'),
-        ('лгунья', 'лгун'), ('Лгунья', 'Лгун'),
-        ('ушла', 'ушёл'), ('пришла', 'пришёл'),
-        ('дождалась', 'дождался'), ('нашлась', 'нашёлся'),
-        ('ушла', 'ушёл'), ('стала', 'стал'),
-        ('взялась', 'взялся'), ('занялась', 'занялся'),
-        ('включилась', 'включился'), ('отвлеклась', 'отвлёкся'),
-        ('смотрела', 'смотрел'), ('сидела', 'сидел'),
-        ('лежала', 'лежал'), ('стояла', 'стоял'),
-        ('молчала', 'молчал'), ('писала', 'писал'),
-        ('читала', 'читал'), ('играла', 'играл'),
-        ('спала', 'спал'), ('ела', 'ел'),
-        ('пила', 'пил'), ('бежала', 'бежал'),
-        ('летела', 'летел'), ('плыла', 'плыл'),
-        ('ждала', 'ждал'), ('звала', 'звал'),
-        ('просила', 'просил'), ('давала', 'давал'),
-        ('брала', 'брал'), ('понимала', 'понимал'),
-        ('знала', 'знал'), ('любила', 'любил'),
-        ('верила', 'верил'), ('думала', 'думал'),
-        ('решила', 'решил'), ('сказала', 'сказал'),
-        ('спросила', 'спросил'), ('ответила', 'ответил'),
-        ('посмотрела', 'посмотрел'), ('увидела', 'увидел'),
-        ('услышала', 'услышал'), ('почувствовала', 'почувствовал'),
-        ('поняла', 'понял'), ('заметила', 'заметил'),
-        ('вспомнила', 'вспомнил'), ('забыла', 'забыл'),
-    ]
-    for fem, masc in replacements:
-        text = text.replace(fem, masc)
-    return text
-
-
 def fallback_reply(char, msgs, user_msg):
-    """Template-based fallback when AI is not configured."""
     attitude = char.get('default_attitude', 'нейтральная и вежливая')
     attitude_replies = STOCK_ANSWERS.get(attitude, STOCK_ANSWERS['нейтральная и вежливая'])
     oversharing = char.get('oversharing_level', 5)
     style = char.get('writing_style', '')
     lying = char.get('lying_tendency', 'честная')
-    humor = char.get('humor_style', '')
     rp = char.get('rp_ability', False)
     name = char.get('name', '')
     char_gender = char.get('gender', 'Женский')
@@ -760,7 +659,15 @@ def fallback_reply(char, msgs, user_msg):
             wc = w.strip('.,!?()[]{}«»""'':;')
             if len(wc) > 2 and wc not in STOPWORDS and wc in lower_words:
                 return 'Давай не будем об этом, хорошо?'
-                break
+
+    is_personal = False
+    for pattern, _ in PERSONAL_QUESTION_PATTERNS:
+        if re.search(pattern, lower):
+            is_personal = True
+            break
+    evade_chance = max(0, 1.0 - oversharing / 10)
+    if is_personal and random.random() < evade_chance:
+        return random.choice(EVASIVE_ANSWERS)
 
     if is_insult:
         r = char.get('harassment_reaction', '')
@@ -801,205 +708,520 @@ def fallback_reply(char, msgs, user_msg):
     reply = _gender_adapt(reply, char_gender)
     return apply_writing_style(reply, style)
 
+def format_character_card(char):
+    name = char.get('name', '?')
+    surname = char.get('surname', '')
+    age = char.get('age', '?')
+    gender = char.get('gender', '?')
+    city = char.get('city', '?')
+    profession = char.get('profession', '?')
+    zodiac = char.get('zodiac', '?')
+    temperament = char.get('temperament', '?')
+    archetype = char.get('archetype', '?')
+    mbti = f"{char.get('mbti_code', '?')} ({char.get('mbti_name', '?')})"
+    mood = char.get('current_mood', '?')
+    opener = char.get('chat_opener', '')
+    desc = char.get('appearance_description', '')
+    backstory = char.get('backstory', '')
 
+    text = (
+        f"🎭 *{name} {surname}*, {age} лет, {gender}\n"
+        f"📍 {city} | {zodiac}\n"
+        f"💼 {profession}\n\n"
+        f"🧠 {temperament} | {archetype}\n"
+        f"📋 {mbti}\n"
+        f"🌊 Текущее настроение: {mood}\n\n"
+        f"*Описание:* {desc[:200]}{'...' if len(desc) > 200 else ''}\n\n"
+        f"*Предыстория:* {backstory[:300]}{'...' if len(backstory) > 300 else ''}"
+    )
 
+    if opener:
+        text += f'\n\n*Первое сообщение:* _{opener}_'
 
+    return text
 
-def _agent_maybe_reconnect(char, agent_state):
-    """Check if enough time passed and maybe reconnect the agent."""
-    if not agent_state.get('disconnected'):
-        return None
-    disconnected_at = agent_state.get('disconnected_at', 0)
-    if time.time() - disconnected_at < AGENT_RECONNECT_DELAY:
-        return None
-    temperament = char.get('temperament', '')
-    prob = {'холерик': 0.2, 'флегматик': 0.4, 'меланхолик': 0.3, 'сангвиник': 0.5}.get(temperament, 0.3)
-    if random.random() >= prob:
-        return None
-    agent_state['disconnected'] = False
-    agent_state['consecutive'] = 0
-    opener = char.get('chat_opener', 'Привет! Я вернулась.')
-    return _gender_adapt(opener, char.get('gender', 'Женский'))
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_allowed(uid):
+        return
+    if uid not in user_data:
+        user_data[uid] = {
+            'char': None,
+            'messages': [],
+            'settings': {
+                'partner_gender': 'any',
+                'partner_age': [],
+                'own_gender': 'any',
+                'topic': 'chat',
+            },
+            'char_count': 0,
+            'msg_count': 0,
+            'prompt_count': 0,
+        }
+        save_user_data()
+        logger.info(f'User {uid} registered')
 
+    await show_main_menu(update, context)
 
-_MAX_MSG_LEN = 280
+async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
+    uid = update.effective_user.id
+    settings = user_data.get(uid, {}).get('settings', {})
+    is_chatting = user_data.get(uid, {}).get('char') is not None
+    char_count = user_data.get(uid, {}).get('char_count', 0)
 
+    gender_map = {'male': 'Мужской', 'female': 'Женский', 'any': 'Любой'}
+    age_map = {'до 17': 'до 17', 'от 18 до 21': '18-21', 'от 22 до 25': '22-25', 'от 26 до 35': '26-35', 'старше 36': '36+'}
+    topic_map = {'chat': 'Обычный', 'flirt': 'Флирт 18+', 'rp': 'Ролевая игра'}
 
-def _split_long_msg(text):
-    """Split a message by sentences if it exceeds max length."""
-    if len(text) <= _MAX_MSG_LEN:
-        return [text]
-    parts = re.split(r'(?<=[.!?])\s+', text)
-    result = []
-    buf = ''
-    for p in parts:
-        if not p.strip():
-            continue
-        if len(buf) + len(p) <= _MAX_MSG_LEN:
-            buf = (buf + ' ' + p).strip() if buf else p
+    gender_text = gender_map.get(settings.get('partner_gender', 'any'), 'Любой')
+    own_gender_text = gender_map.get(settings.get('own_gender', 'any'), 'Любой')
+    age_text = ', '.join(str(age_map.get(a, a)) for a in settings.get('partner_age', [])) if settings.get('partner_age') else 'Любой'
+    topic_text = topic_map.get(settings.get('topic', 'chat'), 'Обычный')
+
+    buttons = [
+        [InlineKeyboardButton(f"Пол собеседника: {gender_text}", callback_data='set_gender')],
+        [InlineKeyboardButton(f"Мой пол: {own_gender_text}", callback_data='set_own_gender')],
+        [InlineKeyboardButton(f"Возраст: {age_text}", callback_data='set_age')],
+        [InlineKeyboardButton(f"Режим: {topic_text}", callback_data='set_topic')],
+    ]
+    buttons.append([InlineKeyboardButton("🔍 Поиск собеседника", callback_data='next_char')])
+    buttons.append([InlineKeyboardButton("❓ Помощь", callback_data='help')])
+
+    text = (
+        f"*Nektome — случайный чат в Telegram* 🤖\n\n"
+        f"Настройки текущего поиска:\n"
+        f"• Пол собеседника: {gender_text}\n"
+        f"• Мой пол: {own_gender_text}\n"
+        f"• Возраст: {age_text}\n"
+        f"• Режим: {topic_text}\n"
+    )
+    if not is_chatting:
+        text += "\n💬 Сейчас ни с кем не общаетесь"
+
+    if edit:
+        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+    else:
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid = update.effective_user.id
+    if not is_allowed(uid):
+        return
+    data = query.data
+
+    if data == 'help':
+        await show_help(update, context)
+        return
+
+    if data == 'set_gender':
+        buttons = [
+            [InlineKeyboardButton("Любой", callback_data='gender_any')],
+            [InlineKeyboardButton("Мужской", callback_data='gender_male')],
+            [InlineKeyboardButton("Женский", callback_data='gender_female')],
+            [InlineKeyboardButton("🔙 Назад", callback_data='back_menu')],
+        ]
+        await query.edit_message_text("Выбери пол собеседника:", reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    if data.startswith('gender_'):
+        gender = data.replace('gender_', '')
+        if uid in user_data:
+            user_data[uid]['settings']['partner_gender'] = gender
+            save_user_data()
+            logger.info(f'User {uid} set partner_gender={gender}')
+        await show_main_menu(update, context, edit=True)
+        return
+
+    if data == 'set_own_gender':
+        buttons = [
+            [InlineKeyboardButton("Любой", callback_data='own_gender_any')],
+            [InlineKeyboardButton("Мужской", callback_data='own_gender_male')],
+            [InlineKeyboardButton("Женский", callback_data='own_gender_female')],
+            [InlineKeyboardButton("🔙 Назад", callback_data='back_menu')],
+        ]
+        await query.edit_message_text("Выбери свой пол:", reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    if data.startswith('own_gender_'):
+        own_gender = data.replace('own_gender_', '')
+        if uid in user_data:
+            user_data[uid]['settings']['own_gender'] = own_gender
+            save_user_data()
+            logger.info(f'User {uid} set own_gender={own_gender}')
+        await show_main_menu(update, context, edit=True)
+        return
+
+    if data == 'set_age':
+        curr_ages = user_data.get(uid, {}).get('settings', {}).get('partner_age', [])
+        def age_btn(label, val):
+            mark = ' ✓' if val in curr_ages else ''
+            return InlineKeyboardButton(f"{label}{mark}", callback_data=f'age_{val}')
+        buttons = [
+            [InlineKeyboardButton("Сбросить все" if curr_ages else "Любой", callback_data='age_any')],
+            [age_btn("до 17", 'до 17'),
+             age_btn("18-21", 'от 18 до 21')],
+            [age_btn("22-25", 'от 22 до 25'),
+             age_btn("26-35", 'от 26 до 35')],
+            [age_btn("36+", 'старше 36')],
+            [InlineKeyboardButton("🔙 Назад", callback_data='back_menu')],
+        ]
+        await query.edit_message_text("Выбери возраст собеседника (можно несколько):", reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    if data.startswith('age_'):
+        age_val = data.replace('age_', '')
+        if uid not in user_data:
+            await start(update, context)
+            return
+        if age_val == 'any':
+            user_data[uid]['settings']['partner_age'] = []
         else:
-            if buf:
-                result.append(buf)
-            buf = p
-    if buf:
-        result.append(buf)
-    return result if len(result) > 1 else [text]
+            ages = user_data[uid]['settings'].get('partner_age', [])
+            if age_val in ages:
+                ages.remove(age_val)
+            else:
+                ages.append(age_val)
+            user_data[uid]['settings']['partner_age'] = ages
+        save_user_data()
+        await show_main_menu(update, context, edit=True)
+        return
 
+    if data == 'set_topic':
+        buttons = [
+            [InlineKeyboardButton("Обычный чат", callback_data='topic_chat')],
+            [InlineKeyboardButton("Флирт 18+", callback_data='topic_flirt')],
+            [InlineKeyboardButton("Ролевая игра", callback_data='topic_rp')],
+            [InlineKeyboardButton("🔙 Назад", callback_data='back_menu')],
+        ]
+        await query.edit_message_text("Выбери режим общения:", reply_markup=InlineKeyboardMarkup(buttons))
+        return
 
-    """Check if enough time passed and maybe reconnect the agent."""
-    if not agent_state.get('disconnected'):
-        return None
-    disconnected_at = agent_state.get('disconnected_at', 0)
-    if time.time() - disconnected_at < AGENT_RECONNECT_DELAY:
-        return None
-    temperament = char.get('temperament', '')
-    prob = {'холерик': 0.2, 'флегматик': 0.4, 'меланхолик': 0.3, 'сангвиник': 0.5}.get(temperament, 0.3)
-    if random.random() >= prob:
-        return None
-    agent_state['disconnected'] = False
-    agent_state['consecutive'] = 0
-    opener = char.get('chat_opener', 'Привет! Я вернулась.')
-    return _gender_adapt(opener, char.get('gender', 'Женский'))
+    if data.startswith('topic_'):
+        topic = data.replace('topic_', '')
+        if uid in user_data:
+            user_data[uid]['settings']['topic'] = topic
+            save_user_data()
+            logger.info(f'User {uid} set topic={topic}')
+        await show_main_menu(update, context, edit=True)
+        return
 
+    if data == 'back_menu':
+        await show_main_menu(update, context, edit=True)
+        return
 
-@app.route('/api/chat', methods=['POST'])
-def api_chat():
-    data = request.get_json() or {}
-    user_msg = data.get('message', '').strip()
-    if not user_msg:
-        return jsonify({'reply': ''})
+    if data == 'next_char':
+        await generate_character(update, context)
+        return
 
-    token = data.get('token', '')
-    store = char_store.get(token)
-    if not store:
-        return jsonify({'reply': 'Персонаж не найден. Начните новый поиск.'})
+    if data == 'show_card':
+        await show_card(update, context)
+        return
 
-    char = store['character']
-    msgs = store['messages']
-    topic = store.get('topic', 'chat')
-    agent_state = store.get('agent', {'enabled': False})
+async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "*Nektome Bot — Помощь*\n\n"
+        "Этот бот — случайный чат с AI-персонажами. "
+        "Каждый персонаж уникален: у него есть имя, внешность, характер, биография и стиль общения.\n\n"
+        "*Команды:*\n"
+        "/start — Главное меню\n"
+        "/next — Новый собеседник\n"
+        "/settings — Настройки\n\n"
+        "*Настройки:*\n"
+        "• Пол собеседника — кого искать (М/Ж/Любой)\n"
+        "• Мой пол — чтобы AI обращался к тебе в правильном роде\n"
+        "• Возраст — возрастная группа (можно выбрать несколько)\n"
+        "• Режим — Обычный чат, Флирт 18+ или Ролевая игра\n\n"
+        "*В чате:*\n"
+        "Просто пиши сообщения — собеседник будет отвечать. "
+        "Когда надоест, нажми «Поиск собеседника» или отправь /next.\n\n"
+        "*Важно:* без API-ключа (OpenAI) ответы генерируются по шаблонам. "
+        "С API-ключом — полноценный AI."
+    )
+    buttons = [[InlineKeyboardButton("🔙 В меню", callback_data='back_menu')]]
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+    else:
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
 
-    # Auto-reconnect on user message if disconnected
-    if agent_state.get('disconnected', False):
-        agent_state['disconnected'] = False
-        agent_state['consecutive'] = 0
+async def show_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in user_data or not user_data[uid].get('char'):
+        text = "Сейчас нет активного персонажа. Найди нового! /next"
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text)
+        else:
+            await update.message.reply_text(text)
+        return
 
-    # Append user message to history
+    char = user_data[uid]['char']
+    card = format_character_card(char)
+    buttons = [[InlineKeyboardButton("🔙 В меню", callback_data='back_menu')]]
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(card, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+    else:
+        await update.message.reply_text(card, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+
+async def generate_character(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_allowed(uid):
+        return
+    if uid not in user_data:
+        await start(update, context)
+        return
+
+    settings = user_data[uid]['settings']
+    partner_gender = settings.get('partner_gender', 'any')
+    partner_age = settings.get('partner_age', [])
+    topic = settings.get('topic', 'chat')
+
+    gender = None
+    if partner_gender == 'male':
+        gender = 'male'
+    elif partner_gender == 'female':
+        gender = 'female'
+
+    age_group = partner_age_groups(partner_age) if partner_age else None
+
+    seed = random.randint(0, 2**31)
+    char_obj = gen_char(seed=seed, gender=gender, age_group=age_group, topic=topic)
+    char_data = make_char_json(char_obj)
+    opener = char_data.get('chat_opener', '')
+    logger.info(f'User {uid} | Generated {char_data.get("name","?")} {char_data.get("surname","?")} '
+                f'({char_data.get("age","?")} {char_data.get("gender","?")}) | '
+                f'topic={topic} seed={seed}')
+
+    initial_msgs = []
+    now = datetime.now()
+    hour = now.hour
+    time_label = 'ночь' if 0 <= hour < 6 else 'утро' if 6 <= hour < 12 else 'день' if 12 <= hour < 18 else 'вечер'
+    initial_msgs.append({'role': 'user', 'content': f'[Сейчас {time_label}, моё время — {hour:02d}:{now.minute:02d}]'})
+    if opener:
+        parts = [p.strip() for p in opener.split('[NEXT]') if p.strip()]
+        if not parts:
+            parts = [opener]
+        for part in parts:
+            initial_msgs.append({'role': 'assistant', 'content': part})
+
+    user_data[uid]['char'] = char_data
+    user_data[uid]['messages'] = initial_msgs
+    user_data[uid]['char_count'] = user_data[uid].get('char_count', 0) + 1
+
+    name = char_data.get('name', '?')
+    surname = char_data.get('surname', '')
+    msg_text = opener if opener else f"{name} {surname}"
+
+    send_opener_now = random.random() < 0.75
+    user_data[uid]['opener_sent'] = send_opener_now
+
+    save_user_data()
+
+    if update.callback_query:
+        await update.callback_query.delete_message()
+
+    try:
+        await update.effective_user.send_message('👤 Собеседник найден')
+    except Exception as e:
+        logger.error(f'User {uid} | Failed to send "Собеседник найден": {e}')
+        return
+
+    if send_opener_now:
+        opener_parts = [p.strip() for p in msg_text.split('[NEXT]') if p.strip()]
+        if not opener_parts:
+            opener_parts = [msg_text]
+        for i, part in enumerate(opener_parts):
+            if i > 0:
+                await asyncio.sleep(random.uniform(0.8, 1.5))
+            try:
+                await update.effective_user.send_chat_action(action='typing')
+            except Exception:
+                pass
+            await asyncio.sleep(random.uniform(0.8, 2.0))
+            try:
+                await update.effective_user.send_message(part)
+            except Exception as e:
+                logger.error(f'User {uid} | Failed to send opener part {i+1}: {e}')
+        user_data[uid]['inject_first_msg'] = opener
+        user_data[uid]['inject_depth'] = 0
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_allowed(uid):
+        return
+    user_msg = update.message.text.strip()
+    logger.info(f'User {uid} | Message received')
+
+    if uid not in user_data or not user_data[uid].get('char'):
+        await update.message.reply_text("Сначала найди собеседника! /next")
+        return
+
+    char = user_data[uid]['char']
+    msgs = user_data[uid]['messages']
+    settings = user_data[uid]['settings']
+    topic = settings.get('topic', 'chat')
+
+    opener_sent = user_data[uid].get('opener_sent', False)
+    if not opener_sent:
+        user_data[uid]['opener_sent'] = True
+        user_data[uid]['inject_first_msg'] = char.get('chat_opener', '')
+        user_data[uid]['inject_depth'] = 1
+        save_user_data()
+
     msgs.append({'role': 'user', 'content': user_msg})
+    user_data[uid]['msg_count'] = user_data[uid].get('msg_count', 0) + 1
 
-    user_gender = char.get('user_gender')
+    try:
+        await update.message.chat.send_action(action='typing')
+    except Exception:
+        pass
+
+    user_gender = settings.get('own_gender', 'any')
     system_prompt = build_system_prompt(char, mode=topic, user_gender=user_gender)
-
-    # Build messages for AI
     ai_messages = [{'role': 'system', 'content': system_prompt}]
     for m in msgs:
         ai_messages.append({'role': m['role'], 'content': m['content']})
 
-    instruction_mode = 'agent' if agent_state.get('enabled') else topic
-    instruction = build_instruction(mode=instruction_mode, user_gender=user_gender)
+    inject = user_data[uid].get('inject_first_msg')
+    if inject:
+        depth = user_data[uid].get('inject_depth', 0)
+        if depth < 3:
+            ai_messages.insert(-1, {'role': 'system', 'content':
+                f'ВАЖНО: Ты уже поприветствовала собеседника своим первым сообщением: «{inject}». '
+                'Не здоровайся снова и не представляйся заново. Просто продолжай общение.'})
+            user_data[uid]['inject_depth'] = depth + 1
+            save_user_data()
+        else:
+            del user_data[uid]['inject_first_msg']
+            del user_data[uid]['inject_depth']
+            save_user_data()
+
+    oversharing = char.get('oversharing_level', 5)
+    instruction = build_instruction(mode=topic, oversharing=oversharing)
     ai_messages.append({'role': 'system', 'content': instruction})
 
-    # Log the full AI request
-    logger.info('--- AI Request ---')
-    logger.info(json.dumps(ai_messages, ensure_ascii=False, indent=2))
-    logger.info('--- End AI Request ---')
-
     reply = None
-    agent_tools = AGENT_TOOLS if agent_state.get('enabled') else None
-
     if AI_ENABLED:
-        result = call_ai(ai_messages, tools=agent_tools)
-        if result:
-            tool_calls = result.get('tool_calls')
-            if tool_calls:
-                for tc in tool_calls:
-                    name = tc['function']['name']
-                    args = json.loads(tc['function']['arguments'])
-                    if name == 'send_message':
-                        reply = args.get('text', '')
-                        break
-            else:
-                reply = result['text']
+        user_data[uid]['prompt_count'] = user_data[uid].get('prompt_count', 0) + 1
+        t0 = time.time()
+        reply = call_ai(ai_messages)
+        elapsed = time.time() - t0
+        if reply:
+            logger.info(f'User {uid} | AI reply ({elapsed:.1f}s)')
+        else:
+            logger.warning(f'User {uid} | AI returned None ({elapsed:.1f}s), using fallback')
 
     if reply is None:
+        logger.info(f'User {uid} | Fallback reply')
         reply = fallback_reply(char, msgs, user_msg)
-    else:
-        if '[DISCONNECT]' in reply:
-            reply = reply.replace('[DISCONNECT]', '').strip()
-            if not reply:
-                reply = 'Пока.'
-            agent_state['disconnected'] = True
-            agent_state['disconnected_at'] = time.time()
-            store['agent'] = agent_state
 
-    logger.info(f'AI Reply: {reply}')
+    disconnected = '[DISCONNECT]' in reply
+    reply = reply.replace('[DISCONNECT]', '').strip()
 
     style = char.get('writing_style', '')
-
-    # Split [NEXT] into multiple consecutive messages (all modes)
-    agent_messages = []
-    agent_disconnected = agent_state.get('disconnected', False)
-
-    if reply:
-        parts = reply.split('[NEXT]')
-        reply = parts[0].strip()
-        extras = [p.strip() for p in parts[1:] if p.strip()]
-
-        if extras:
-            for extra in extras[:3]:
-                extra = apply_writing_style(extra, style)
-                agent_messages.append(extra)
-                msgs.append({'role': 'assistant', 'content': extra})
-        elif agent_state.get('enabled'):
-            # Agent mode fallback: split by double newline if no [NEXT]
-            parts = reply.split('\n\n')
-            parts = [p.strip() for p in parts if p.strip()]
-            if len(parts) > 1:
-                reply = parts[0]
-                extras = parts[1:]
-                all_parts = []
-                for p in [reply] + extras:
-                    all_parts.extend(_split_long_msg(p))
-                reply = all_parts[0]
-                extras = all_parts[1:]
-                for extra in extras[:3]:
-                    extra = apply_writing_style(extra, style)
-                    agent_messages.append(extra)
-                    msgs.append({'role': 'assistant', 'content': extra})
-
-    reply = apply_writing_style(reply, style)
     msgs.append({'role': 'assistant', 'content': reply})
+    reply = apply_writing_style(reply, style)
 
-    store['messages'] = msgs
-    return jsonify({
-        'reply': reply,
-        'agent_messages': agent_messages,
-        'agent_disconnected': agent_disconnected,
-    })
+    parts = [p.strip() for p in reply.split('[NEXT]') if p.strip()]
+    if not parts:
+        parts = [reply]
 
+    for i, part in enumerate(parts):
+        if i > 0:
+            await asyncio.sleep(random.uniform(0.8, 1.8))
+            try:
+                await update.message.chat.send_action(action='typing')
+            except Exception:
+                pass
+            await asyncio.sleep(random.uniform(0.5, 1.2))
+        try:
+            await update.message.reply_text(part)
+        except Exception as e:
+            logger.warning(f'Failed to send reply part: {e}')
 
-@app.route('/api/agent/poll', methods=['POST'])
-def api_agent_poll():
-    data = request.get_json() or {}
-    token = data.get('token', '')
-    store = char_store.get(token)
-    if not store:
-        return jsonify({'idle': True})
+    if disconnected:
+        logger.info(f'User {uid} | Character disconnected via [DISCONNECT]')
+        user_data[uid]['char'] = None
+        user_data[uid]['messages'] = []
+        save_user_data()
+        await asyncio.sleep(0.5)
+        try:
+            await update.message.reply_text(
+                "Собеседник завершил разговор.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔍 Поиск собеседника", callback_data='next_char'),
+                ]]),
+            )
+        except Exception as e:
+            logger.warning(f'Failed to send disconnect message: {e}')
 
-    agent_state = store.get('agent', {'enabled': False})
-    if not agent_state.get('enabled'):
-        return jsonify({'idle': True})
+async def next_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        return
+    await generate_character(update, context)
 
-    reconn = _agent_maybe_reconnect(store['character'], agent_state)
-    if reconn:
-        store['agent'] = agent_state
-        style = store['character'].get('writing_style', '')
-        reconn = apply_writing_style(reconn, style)
-        return jsonify({'reconnected': True, 'message': reconn})
+async def card_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        return
+    await show_card(update, context)
 
-    return jsonify({'idle': True})
+async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_allowed(update.effective_user.id):
+        return
+    await show_main_menu(update, context, edit=False)
 
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_allowed(uid):
+        return
+    data = user_data.get(uid, {})
+    msg_count = data.get('msg_count', 0)
+    prompt_count = data.get('prompt_count', 0)
+    char_count = data.get('char_count', 0)
+    text = (
+        f'*Статистика*\n'
+        f'👤 Сообщений отправлено: {msg_count}\n'
+        f'🤖 AI запросов: {prompt_count}\n'
+        f'🎭 Персонажей встречено: {char_count}'
+    )
+    await update.message.reply_text(text, parse_mode='Markdown')
+
+async def _set_commands(app):
+    commands = [
+        ('start', 'Главное меню'),
+        ('next', 'Новый собеседник'),
+        ('settings', 'Настройки'),
+        ('stats', 'Моя статистика'),
+    ]
+    await app.bot.set_my_commands(commands)
+
+def main():
+    if not BOT_TOKEN:
+        logger.error('BOT_TOKEN not configured in .env')
+        return
+
+    app = Application.builder().token(BOT_TOKEN).post_init(_set_commands) \
+        .read_timeout(30).write_timeout(30).connect_timeout(30).build()
+
+    app.add_handler(CommandHandler('start', start))
+    app.add_handler(CommandHandler('next', next_command))
+    app.add_handler(CommandHandler('card', card_command))
+    app.add_handler(CommandHandler('settings', settings_command))
+    app.add_handler(CommandHandler('stats', stats_command))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    for attempt in range(5):
+        try:
+            logger.info(f'Starting Nektome Telegram Bot... (attempt {attempt+1})')
+            app.run_polling(allowed_updates=Update.ALL_TYPES, bootstrap_retries=3)
+            return
+        except Exception as e:
+            logger.error(f'Failed to start bot: {e}')
+            if attempt < 4:
+                logger.info('Retrying in 5 seconds...')
+                time.sleep(5)
 
 if __name__ == '__main__':
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
-    app.run(debug=True, host='0.0.0.0', port=port)
+    main()
