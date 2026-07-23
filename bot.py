@@ -3,6 +3,7 @@ import json
 import uuid
 import os
 import re
+import re
 import sys
 import asyncio
 import urllib.request
@@ -45,6 +46,8 @@ AGENT_ENABLED = os.environ.get('AGENT_ENABLED', 'false').lower() == 'true'
 AGENT_MAX_CONSECUTIVE = int(os.environ.get('AGENT_MAX_CONSECUTIVE', '3'))
 AGENT_IDLE_TIMEOUT = int(os.environ.get('AGENT_IDLE_TIMEOUT', '180'))
 AGENT_RECONNECT_DELAY = int(os.environ.get('AGENT_RECONNECT_DELAY', '60'))
+BOT_PROXY_URL = os.environ.get('BOT_PROXY_URL', '') or None
+BOT_USE_PROXY = os.environ.get('BOT_USE_PROXY', 'false').lower() == 'true'
 
 if not BOT_TOKEN:
     logger.error('BOT_TOKEN not set in .env')
@@ -489,6 +492,15 @@ def apply_writing_style(text, style):
         return text.replace(',', '').replace('!', '').replace('?', '')
     return text
 
+
+_re_sentence_split = re.compile(r'(.*?(?:[.!?](?:\s|$)|$))')
+
+
+def _split_sentences(text):
+    parts = _re_sentence_split.findall(text)
+    return [p.strip() for p in parts if p.strip()]
+
+
 STOCK_ANSWERS = {
     'глубокое недоверие и цинизм': {
         'greeting': 'Ну привет. Только давай без сюсюканья.',
@@ -805,7 +817,10 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, edi
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception:
+        pass
     uid = update.effective_user.id
     if not is_allowed(uid):
         return
@@ -1015,6 +1030,7 @@ async def generate_character(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     send_opener_now = random.random() < 0.75
     user_data[uid]['opener_sent'] = send_opener_now
+    user_data[uid]['last_msg_time'] = time.time()
 
     save_user_data()
 
@@ -1031,6 +1047,11 @@ async def generate_character(update: Update, context: ContextTypes.DEFAULT_TYPE)
         opener_parts = [p.strip() for p in msg_text.split('[NEXT]') if p.strip()]
         if not opener_parts:
             opener_parts = [msg_text]
+        if char_data.get('writing_style') == 'пишет короткими фразами':
+            fragmented = []
+            for p in opener_parts:
+                fragmented.extend(_split_sentences(p))
+            opener_parts = fragmented
         for i, part in enumerate(opener_parts):
             if i > 0:
                 await asyncio.sleep(random.uniform(0.8, 1.5))
@@ -1048,6 +1069,7 @@ async def generate_character(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    t_start = time.time()
     if not is_allowed(uid):
         return
     user_msg = update.message.text.strip()
@@ -1069,6 +1091,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data[uid]['inject_depth'] = 1
         save_user_data()
 
+    # detect long gaps (>=15 min) that break roleplay continuity
+    now = time.time()
+    last_time = user_data[uid].get('last_msg_time', 0)
+    gap_minutes = (now - last_time) / 60
+    if last_time > 0 and gap_minutes >= 15:
+        gap_msg = f'[Прошло {int(gap_minutes)} минут тишины]'
+        msgs.append({'role': 'system', 'content': gap_msg})
+        logger.info(f'User {uid} | Time gap detected: {int(gap_minutes)} min')
+    user_data[uid]['last_msg_time'] = now
+
     msgs.append({'role': 'user', 'content': user_msg})
     user_data[uid]['msg_count'] = user_data[uid].get('msg_count', 0) + 1
 
@@ -1080,6 +1112,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_gender = settings.get('own_gender', 'any')
     system_prompt = build_system_prompt(char, mode=topic, user_gender=user_gender)
     ai_messages = [{'role': 'system', 'content': system_prompt}]
+
     for m in msgs:
         ai_messages.append({'role': m['role'], 'content': m['content']})
 
@@ -1102,13 +1135,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ai_messages.append({'role': 'system', 'content': instruction})
 
     reply = None
+    ai_time = 0.0
     if AI_ENABLED:
         user_data[uid]['prompt_count'] = user_data[uid].get('prompt_count', 0) + 1
         t0 = time.time()
         reply = call_ai(ai_messages)
         elapsed = time.time() - t0
         if reply:
-            logger.info(f'User {uid} | AI reply ({elapsed:.1f}s)')
+            ai_time = elapsed
         else:
             logger.warning(f'User {uid} | AI returned None ({elapsed:.1f}s), using fallback')
 
@@ -1127,6 +1161,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not parts:
         parts = [reply]
 
+    if style == 'пишет короткими фразами':
+        fragmented = []
+        for p in parts:
+            fragmented.extend(_split_sentences(p))
+        parts = fragmented
+
     for i, part in enumerate(parts):
         if i > 0:
             await asyncio.sleep(random.uniform(0.8, 1.8))
@@ -1139,6 +1179,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(part)
         except Exception as e:
             logger.warning(f'Failed to send reply part: {e}')
+
+    real_time = time.time() - t_start
+    logger.info(f'User {uid} | AI: {ai_time:.1f}s / Real: {real_time:.1f}s')
+    save_user_data()
 
     if disconnected:
         logger.info(f'User {uid} | Character disconnected via [DISCONNECT]')
@@ -1201,8 +1245,11 @@ def main():
         logger.error('BOT_TOKEN not configured in .env')
         return
 
-    app = Application.builder().token(BOT_TOKEN).post_init(_set_commands) \
-        .read_timeout(30).write_timeout(30).connect_timeout(30).build()
+    builder = Application.builder().token(BOT_TOKEN).post_init(_set_commands) \
+        .read_timeout(30).write_timeout(30).connect_timeout(30)
+    if BOT_USE_PROXY and BOT_PROXY_URL:
+        builder = builder.proxy(BOT_PROXY_URL)
+    app = builder.build()
 
     app.add_handler(CommandHandler('start', start))
     app.add_handler(CommandHandler('next', next_command))
