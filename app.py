@@ -10,7 +10,7 @@ import logging
 import threading
 import math
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from flask import Flask, render_template, request, jsonify
 from generators.char_generator import generate as gen_char
 
@@ -70,15 +70,86 @@ load_env()
 OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', '').rstrip('/')
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
-
+PROVIDER_TYPE = os.environ.get('PROVIDER_TYPE', 'openai').lower()
 
 AI_ENABLED = bool(OPENAI_API_KEY and OPENAI_BASE_URL)
 
-# Agent mode settings
-AGENT_ENABLED = os.environ.get('AGENT_ENABLED', 'false').lower() == 'true'
-AGENT_MAX_CONSECUTIVE = int(os.environ.get('AGENT_MAX_CONSECUTIVE', '3'))
-AGENT_IDLE_TIMEOUT = int(os.environ.get('AGENT_IDLE_TIMEOUT', '180'))
-AGENT_RECONNECT_DELAY = int(os.environ.get('AGENT_RECONNECT_DELAY', '60'))
+# --- Multi-provider support ---
+# PROVIDER_COUNT=2
+# PROVIDER1_NAME=Deepseek
+# PROVIDER1_TYPE=deepseek
+# PROVIDER1_BASE_URL=https://api.deepseek.com/v1
+# PROVIDER1_API_KEY=sk-xxx
+# PROVIDER1_MODEL=deepseek-v4-flash
+
+providers = []
+selected_provider = None
+
+def load_providers():
+    global providers
+    count = os.environ.get('PROVIDER_COUNT', '0')
+    if count.isdigit() and int(count) > 0:
+        for i in range(1, int(count) + 1):
+            name = os.environ.get(f'PROVIDER{i}_NAME', f'Provider {i}')
+            ptype = os.environ.get(f'PROVIDER{i}_TYPE', 'openai').lower()
+            base_url = os.environ.get(f'PROVIDER{i}_BASE_URL', '').rstrip('/')
+            api_key = os.environ.get(f'PROVIDER{i}_API_KEY', '')
+            model = os.environ.get(f'PROVIDER{i}_MODEL', 'gpt-4o-mini')
+            if base_url and api_key:
+                providers.append({
+                    'name': name,
+                    'type': ptype,
+                    'base_url': base_url,
+                    'api_key': api_key,
+                    'model': model,
+                })
+    if not providers and OPENAI_BASE_URL and OPENAI_API_KEY:
+        providers.append({
+            'name': 'Default',
+            'type': PROVIDER_TYPE,
+            'base_url': OPENAI_BASE_URL,
+            'api_key': OPENAI_API_KEY,
+            'model': OPENAI_MODEL,
+        })
+
+def select_provider():
+    global selected_provider, OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL, AI_ENABLED, PROVIDER_TYPE
+    if not providers:
+        logger.error('No AI providers configured. Set OPENAI_BASE_URL + OPENAI_API_KEY in .env')
+        AI_ENABLED = False
+        return
+    if len(providers) == 1:
+        selected_provider = providers[0]
+        logger.info(f'Auto-selected provider: {selected_provider["name"]} ({selected_provider["type"]})')
+    else:
+        print('\n' + '=' * 50)
+        print('   Nektome — выбор провайдера')
+        print('=' * 50)
+        for idx, p in enumerate(providers, 1):
+            print(f'  {idx}. {p["name"]} ({p["type"]}) — {p["base_url"]}')
+        print('=' * 50)
+        while True:
+            try:
+                choice = input(f'  Выбери провайдера (1-{len(providers)}): ').strip()
+                idx = int(choice) - 1
+                if 0 <= idx < len(providers):
+                    selected_provider = providers[idx]
+                    break
+            except (ValueError, IndexError):
+                pass
+            print(f'  Введите число от 1 до {len(providers)}')
+        print(f'  Выбран: {selected_provider["name"]}')
+        print('=' * 50 + '\n')
+    OPENAI_BASE_URL = selected_provider['base_url']
+    OPENAI_API_KEY = selected_provider['api_key']
+    OPENAI_MODEL = selected_provider['model']
+    PROVIDER_TYPE = selected_provider['type']
+    AI_ENABLED = bool(OPENAI_API_KEY and OPENAI_BASE_URL)
+
+load_providers()
+select_provider()
+
+
 
 
 CHAT_SAVE_IDS_STR = os.environ.get('CHAT_SAVE_IDS', '')
@@ -157,25 +228,359 @@ def _pick_old_encounter_web():
     logger.info(f'Old encounter (web)! Re-meeting {char_data.get("name","?")}')
     return char_data, old_msgs
 
-AGENT_TOOLS = [
+CITY_TZ = {
+    'Москва': 3, 'Санкт-Петербург': 3, 'Новосибирск': 7, 'Екатеринбург': 5,
+    'Казань': 3, 'Краснодар': 3, 'Ростов-на-Дону': 3, 'Владивосток': 10,
+    'Нижний Новгород': 3, 'Челябинск': 5, 'Самара': 4, 'Омск': 6,
+    'Воронеж': 3, 'Пермь': 5, 'Волгоград': 3, 'Уфа': 5, 'Красноярск': 7,
+    'Саратов': 4, 'Тюмень': 5, 'Иркутск': 8, 'Хабаровск': 10, 'Ярославль': 3,
+    'Севастополь': 3, 'Калининград': 2, 'Мурманск': 3, 'Сочи': 3, 'Псков': 3,
+    'Великий Новгород': 3, 'Суздаль': 3, 'Владимир': 3, 'Тверь': 3, 'Тула': 3,
+}
+_TZ_CACHE = {}
+
+def _city_now(city=None):
+    if city and city in CITY_TZ:
+        offset_h = CITY_TZ[city]
+    else:
+        offset_h = 3
+    if offset_h not in _TZ_CACHE:
+        _TZ_CACHE[offset_h] = timezone(timedelta(hours=offset_h))
+    return datetime.now(_TZ_CACHE[offset_h])
+
+TOOLS = [
     {
         'type': 'function',
         'function': {
-            'name': 'send_message',
-            'description': 'Написать и отправить сообщение собеседнику. Это основной способ общения.',
+            'name': 'get_current_time',
+            'description': 'Узнать текущее время. Если известен город — укажи его, чтобы время было точным для этого города.',
             'parameters': {
                 'type': 'object',
                 'properties': {
-                    'text': {
+                    'city': {
                         'type': 'string',
-                        'description': 'Текст сообщения, которое увидит собеседник',
+                        'description': 'Название города (по-русски). Если не указан — время по Москве (UTC+3).',
                     },
                 },
-                'required': ['text'],
+                'required': [],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'get_date',
+            'description': 'Узнать сегодняшнюю дату (число, месяц, год). Если известен город — укажи его, чтобы дата была точной.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'city': {
+                        'type': 'string',
+                        'description': 'Название города (по-русски). Если не указан — по Москве (UTC+3).',
+                    },
+                },
+                'required': [],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'get_weekday',
+            'description': 'Узнать какой сегодня день недели. Если известен город — укажи его, чтобы день был точным.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'city': {
+                        'type': 'string',
+                        'description': 'Название города (по-русски). Если не указан — по Москве (UTC+3).',
+                    },
+                },
+                'required': [],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'roll_dice',
+            'description': 'Бросить кубик с указанным количеством граней. Используется для игр, гаданий и случайных решений.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'sides': {
+                        'type': 'integer',
+                        'description': 'Количество граней кубика (по умолчанию 6)',
+                        'default': 6,
+                    },
+                },
+                'required': [],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'coin_flip',
+            'description': 'Подбросить монетку. Результат: орёл или решка.',
+            'parameters': {
+                'type': 'object',
+                'properties': {},
+                'required': [],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'get_season',
+            'description': 'Узнать текущее время года в указанном городе или полушарии.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'city': {
+                        'type': 'string',
+                        'description': 'Название города (по-русски). Если не указан — по Москве (UTC+3).',
+                    },
+                    'hemisphere': {
+                        'type': 'string',
+                        'description': 'Полушарие: northern (северное) или southern (южное). По умолчанию northern.',
+                        'enum': ['northern', 'southern'],
+                        'default': 'northern',
+                    },
+                },
+                'required': [],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'get_moon_phase',
+            'description': 'Узнать примерную фазу луны на сегодня.',
+            'parameters': {
+                'type': 'object',
+                'properties': {},
+                'required': [],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'days_until',
+            'description': 'Посчитать количество дней до указанной даты (число и месяц).',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'day': {
+                        'type': 'integer',
+                        'description': 'День месяца (1-31)',
+                    },
+                    'month': {
+                        'type': 'integer',
+                        'description': 'Месяц (1-12)',
+                    },
+                },
+                'required': ['day', 'month'],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'zodiac_info',
+            'description': 'Получить информацию о знаке зодиака: даты, стихия, характеристика.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'sign': {
+                        'type': 'string',
+                        'description': 'Название знака зодиака на русском (овен, телец, близнецы, рак, лев, дева, весы, скорпион, стрелец, козерог, водолей, рыбы)',
+                    },
+                },
+                'required': ['sign'],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'remember',
+            'description': 'Запомнить важный факт о собеседнике. Используй, когда узнаёшь что-то новое и важное, что стоит помнить в будущих разговорах. НЕ запоминай факты о себе — только о пользователе.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'fact': {
+                        'type': 'string',
+                        'description': 'Факт о собеседнике для запоминания',
+                    },
+                    'importance': {
+                        'type': 'integer',
+                        'description': 'Важность от 1 до 10',
+                    },
+                },
+                'required': ['fact', 'importance'],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'forget',
+            'description': 'Забыть ранее запомненный факт о собеседнике по его ID. Используй, если факт устарел или оказался неверным.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'fact_id': {
+                        'type': 'integer',
+                        'description': 'ID факта для удаления',
+                    },
+                },
+                'required': ['fact_id'],
             },
         },
     },
 ]
+
+_ZODIAC_DATA = {
+    'овен': '21 марта — 19 апреля. Стихия: Огонь. Характер: энергичный, импульсивный, лидерский.',
+    'телец': '20 апреля — 20 мая. Стихия: Земля. Характер: упрямый, надёжный, чувственный.',
+    'близнецы': '21 мая — 20 июня. Стихия: Воздух. Характер: общительный, любопытный, переменчивый.',
+    'рак': '21 июня — 22 июля. Стихия: Вода. Характер: эмоциональный, заботливый, интуитивный.',
+    'лев': '23 июля — 22 августа. Стихия: Огонь. Характер: гордый, щедрый, артистичный.',
+    'дева': '23 августа — 22 сентября. Стихия: Земля. Характер: практичный, перфекционист, аналитичный.',
+    'весы': '23 сентября — 22 октября. Стихия: Воздух. Характер: дипломатичный, справедливый, нерешительный.',
+    'скорпион': '23 октября — 21 ноября. Стихия: Вода. Характер: страстный, загадочный, волевой.',
+    'стрелец': '22 ноября — 21 декабря. Стихия: Огонь. Характер: оптимистичный, свободолюбивый, прямолинейный.',
+    'козерог': '22 декабря — 19 января. Стихия: Земля. Характер: амбициозный, дисциплинированный, терпеливый.',
+    'водолей': '20 января — 18 февраля. Стихия: Воздух. Характер: независимый, изобретательный, гуманист.',
+    'рыбы': '19 февраля — 20 марта. Стихия: Вода. Характер: мечтательный, эмпатичный, творческий.',
+}
+
+TOOL_FUNCTIONS = {
+    'get_current_time': lambda args: _city_now(args.get('city')).strftime('%H:%M:%S'),
+    'get_date': lambda args: _city_now(args.get('city')).strftime('%d.%m.%Y'),
+    'get_weekday': lambda args: {
+        0: 'понедельник', 1: 'вторник', 2: 'среда', 3: 'четверг',
+        4: 'пятница', 5: 'суббота', 6: 'воскресенье',
+    }[_city_now(args.get('city')).weekday()],
+    'roll_dice': lambda args: f'Выпало: {random.randint(1, args.get("sides", 6))}',
+    'coin_flip': lambda args: random.choice(['Орёл', 'Решка']),
+    'get_season': lambda args: (
+        lambda m: 'лето' if m in (12, 1, 2) else 'осень' if m in (3, 4, 5) else 'зима' if m in (6, 7, 8) else 'весна'
+    )(_city_now(args.get('city')).month)
+    if args.get('hemisphere', 'northern') == 'southern'
+    else (
+        lambda m: 'зима' if m in (12, 1, 2) else 'весна' if m in (3, 4, 5) else 'лето' if m in (6, 7, 8) else 'осень'
+    )(_city_now(args.get('city')).month),
+    'get_moon_phase': lambda args: (
+        lambda d: 'новолуние' if d < 1.5 else 'растущий серп' if d < 7 else 'первая четверть' if d < 8.5 else 'растущая луна' if d < 14 else 'полнолуние' if d < 15.5 else 'убывающая луна' if d < 21 else 'последняя четверть' if d < 22.5 else 'старый серп'
+    )(datetime.now().day % 29.5),
+    'days_until': lambda args: (
+        lambda now, target: str((target.replace(year=target.year + 1) - now).days) if target <= now else str((target - now).days)
+    )(datetime.now(), datetime.now().replace(month=args.get('month', 1), day=args.get('day', 1))),
+    'zodiac_info': lambda args: _ZODIAC_DATA.get(args.get('sign', '').lower(), 'Знак не найден. Попробуй: овен, телец, близнецы, рак, лев, дева, весы, скорпион, стрелец, козерог, водолей, рыбы.'),
+    'remember': lambda args: _do_remember(args),
+    'forget': lambda args: _do_forget(args),
+}
+
+_current_tool_store = None
+
+
+def _build_memory_block(memory):
+    if not memory or not memory.get('facts'):
+        return None
+    now = time.time()
+    facts = sorted(memory['facts'], key=lambda f: (-f['importance'], -f['accessed']))[:15]
+    for f in facts:
+        f['accessed'] = now
+    lines = ['[ПАМЯТЬ]']
+    for f in facts:
+        lines.append(f'[id={f["id"]}] {f["text"]} ({f["importance"]}/10)')
+    return '\n'.join(lines)
+
+
+def _evict_memory(memory):
+    if len(memory['facts']) <= 50:
+        return
+    memory['facts'].sort(key=lambda f: (-f['importance'], -f['accessed']))
+    memory['facts'] = memory['facts'][:50]
+
+
+def _do_remember(args):
+    global _current_tool_store
+    store = _current_tool_store
+    if not store:
+        return 'Ошибка: нет активной сессии'
+    memory = store.setdefault('memory', {'facts': [], 'next_id': 0, 'lock': False})
+    if memory.get('lock'):
+        return 'Нельзя запоминать так часто. Подожди.'
+    fact = args.get('fact', '').strip()
+    importance = args.get('importance', 5)
+    if not fact:
+        return 'Не указан факт для запоминания.'
+    memory['facts'].append({
+        'id': memory['next_id'],
+        'text': fact[:200],
+        'importance': min(max(importance, 1), 10),
+        'created': time.time(),
+        'accessed': time.time(),
+    })
+    memory['next_id'] += 1
+    memory['lock'] = True
+    _evict_memory(memory)
+    return f'Запомнила: {fact[:200]} (важность {importance}/10)'
+
+
+def _do_forget(args):
+    global _current_tool_store
+    store = _current_tool_store
+    if not store:
+        return 'Ошибка: нет активной сессии'
+    memory = store.get('memory', {})
+    fact_id = args.get('fact_id', -1)
+    before = len(memory.get('facts', []))
+    memory['facts'] = [f for f in memory.get('facts', []) if f['id'] != fact_id]
+    after = len(memory['facts'])
+    if before != after:
+        return f'Забыла факт #{fact_id}'
+    return f'Факт #{fact_id} не найден'
+
+
+_REQUEST_LOG_FILE = os.path.join(os.path.dirname(__file__), 'request_log.json')
+_session_request_count = 0
+
+
+def _load_request_log():
+    if not os.path.exists(_REQUEST_LOG_FILE):
+        return {'daily': {}, 'total': 0}
+    try:
+        with open(_REQUEST_LOG_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {'daily': {}, 'total': 0}
+
+
+def _save_request_log(log):
+    try:
+        with open(_REQUEST_LOG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(log, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f'Failed to save request log: {e}')
+
+
+def _log_ai_request():
+    global _session_request_count
+    _session_request_count += 1
+    log = _load_request_log()
+    today = datetime.now().strftime('%Y-%m-%d')
+    daily = log.get('daily', {})
+    daily[today] = daily.get(today, 0) + 1
+    log['daily'] = daily
+    log['total'] = log.get('total', 0) + 1
+    _save_request_log(log)
+
 
 def call_ai(messages, tools=None):
     """Call OpenAI-compatible API. Returns dict with 'text', 'tool_calls' or None."""
@@ -199,6 +604,7 @@ def call_ai(messages, tools=None):
         msg = result['choices'][0]['message']
         text = (msg.get('content') or '').strip()
         tool_calls = msg.get('tool_calls')
+        _log_ai_request()
         return {'text': text, 'tool_calls': tool_calls}
     except Exception as e:
         logger.error(f'AI call failed: {e}')
@@ -249,8 +655,6 @@ def make_char_json(char):
 
 
 def build_system_prompt(char, mode='chat', user_gender=None):
-    if mode == 'agent':
-        mode = 'chat'
     def v(key, default=''):
         val = char.get(key, default)
         if isinstance(val, (list, tuple)):
@@ -450,25 +854,6 @@ def build_instruction(mode='chat', user_gender=None, chat_duration=''):
             'ты сама выбрала зайти именно сейчас, и твоё время позволяет. '
             'Используй [DISCONNECT] только если собеседник грубит, шлёт дикпики или разговор зашёл в тупик.\n\n'
         )
-    if mode == 'agent':
-        return (
-            gender_hint +
-            duration_line +
-            'ВАЖНО: 1 предложение = 1 сообщение. '
-            'Никогда не пиши больше одного предложения в сообщении. '
-            'Если хочешь сказать несколько предложений — каждое новое через [NEXT]:\n'
-            'ПРИМЕР: «Привет! [NEXT] Как дела? [NEXT] А у меня день сумасшедший»\n'
-            'Интроверты пишут по 1 сообщению, экстраверты — по 2-3.\n\n'
-            'Формат: ты пишешь в текстовом мессенджере с телефона. '
-            'Следуй своему профилю выше. Пиши естественно, как живой человек.\n\n'
-            'У тебя есть инструмент:\n'
-            '- send_message(text) — написать сообщение (основной способ)\n'
-            'Используй send_message для обычных ответов. '
-            'Если хочешь закончить разговор — добавь в конец сообщения токен [DISCONNECT].\n'
-            'Пример: «Пока! Было приятно пообщаться. [DISCONNECT]»\n\n'
-            'Не выдумывай фактов, которых нет в профиле. '
-            'Естественный живой язык, без кринжового сленга.'
-        )
     if mode == 'flirt':
         return (
             gender_hint +
@@ -615,7 +1000,6 @@ def api_generate():
     topic = data.get('topic', 'chat')
     old_encounters_setting = data.get('old_encounters', True)
 
-    agent_enabled = AGENT_ENABLED
     token = str(uuid.uuid4())
 
     # Save previous chat log if swapping
@@ -634,7 +1018,6 @@ def api_generate():
     if old_encounter:
         char_data, old_context = old_encounter
         char_data['user_gender'] = user_gender
-        char_data['agent_mode'] = agent_enabled
         opener = char_data.get('chat_opener', '')
         logger.info(f'OLD ENCOUNTER (web): {char_data.get("name","?")} {char_data.get("surname","?")}')
     else:
@@ -643,7 +1026,6 @@ def api_generate():
 
         char_data = make_char_json(char)
         char_data['user_gender'] = user_gender
-        char_data['agent_mode'] = agent_enabled
         opener = char_data.get('chat_opener', '')
         old_context = None
 
@@ -663,12 +1045,7 @@ def api_generate():
         'messages': initial_msgs,
         'topic': topic,
         'old_context': old_context,
-        'agent': {
-            'enabled': agent_enabled,
-            'consecutive': 0,
-            'disconnected': False,
-            'disconnected_at': None,
-        },
+        'memory': {'facts': [], 'next_id': 0},
     }
     char_data['_token'] = token
     char_data['_openers_count'] = len([m for m in initial_msgs if m['role'] == 'assistant'])
@@ -927,23 +1304,6 @@ def fallback_reply(char, msgs, user_msg):
 
 
 
-def _agent_maybe_reconnect(char, agent_state):
-    """Check if enough time passed and maybe reconnect the agent."""
-    if not agent_state.get('disconnected'):
-        return None
-    disconnected_at = agent_state.get('disconnected_at', 0)
-    if time.time() - disconnected_at < AGENT_RECONNECT_DELAY:
-        return None
-    temperament = char.get('temperament', '')
-    prob = {'холерик': 0.2, 'флегматик': 0.4, 'меланхолик': 0.3, 'сангвиник': 0.5}.get(temperament, 0.3)
-    if random.random() >= prob:
-        return None
-    agent_state['disconnected'] = False
-    agent_state['consecutive'] = 0
-    opener = char.get('chat_opener', 'Привет! Я вернулась.')
-    return _gender_adapt(opener, char.get('gender', 'Женский'))
-
-
 _MAX_MSG_LEN = 280
 
 
@@ -968,22 +1328,6 @@ def _split_long_msg(text):
     return result if len(result) > 1 else [text]
 
 
-    """Check if enough time passed and maybe reconnect the agent."""
-    if not agent_state.get('disconnected'):
-        return None
-    disconnected_at = agent_state.get('disconnected_at', 0)
-    if time.time() - disconnected_at < AGENT_RECONNECT_DELAY:
-        return None
-    temperament = char.get('temperament', '')
-    prob = {'холерик': 0.2, 'флегматик': 0.4, 'меланхолик': 0.3, 'сангвиник': 0.5}.get(temperament, 0.3)
-    if random.random() >= prob:
-        return None
-    agent_state['disconnected'] = False
-    agent_state['consecutive'] = 0
-    opener = char.get('chat_opener', 'Привет! Я вернулась.')
-    return _gender_adapt(opener, char.get('gender', 'Женский'))
-
-
 @app.route('/api/chat', methods=['POST'])
 def api_chat():
     data = request.get_json() or {}
@@ -999,23 +1343,17 @@ def api_chat():
     char = store['character']
     msgs = store['messages']
     topic = store.get('topic', 'chat')
-    agent_state = store.get('agent', {'enabled': False})
 
-    # Auto-reconnect on user message if disconnected
-    if agent_state.get('disconnected', False):
-        agent_state['disconnected'] = False
-        agent_state['consecutive'] = 0
+    if store.get('memory'):
+        store['memory']['lock'] = False
 
-    # Append user message to history
     msgs.append({'role': 'user', 'content': user_msg})
 
     user_gender = char.get('user_gender')
     system_prompt = build_system_prompt(char, mode=topic, user_gender=user_gender)
 
-    # Build messages for AI
     ai_messages = [{'role': 'system', 'content': system_prompt}]
 
-    # Inject old encounter context if present
     old_ctx = store.pop('old_context', None)
     if old_ctx:
         ctx_block = [
@@ -1039,31 +1377,49 @@ def api_chat():
     for m in msgs:
         ai_messages.append({'role': m['role'], 'content': m['content']})
 
-    instruction_mode = 'agent' if agent_state.get('enabled') else topic
-    instruction = build_instruction(mode=instruction_mode, user_gender=user_gender, chat_duration=char.get('chat_duration', 'пока не надоест'))
+    instruction = build_instruction(mode=topic, user_gender=user_gender, chat_duration=char.get('chat_duration', 'пока не надоест'))
     ai_messages.append({'role': 'system', 'content': instruction})
 
-    # Log the full AI request
+    memory_block = _build_memory_block(store.get('memory'))
+    if memory_block:
+        insert_pos = max(1, len(ai_messages) - 3)
+        ai_messages.insert(insert_pos, {'role': 'system', 'content': memory_block})
+
     logger.info('--- AI Request ---')
     logger.info(json.dumps(ai_messages, ensure_ascii=False, indent=2))
     logger.info('--- End AI Request ---')
 
     reply = None
-    agent_tools = AGENT_TOOLS if agent_state.get('enabled') else None
-
     if AI_ENABLED:
-        result = call_ai(ai_messages, tools=agent_tools)
-        if result:
-            tool_calls = result.get('tool_calls')
-            if tool_calls:
-                for tc in tool_calls:
-                    name = tc['function']['name']
-                    args = json.loads(tc['function']['arguments'])
-                    if name == 'send_message':
-                        reply = args.get('text', '')
-                        break
-            else:
-                reply = result['text']
+        global _current_tool_store
+        _current_tool_store = store
+        text, tool_calls = call_ai(ai_messages, tools=TOOLS)
+        max_tool_rounds = 5
+        tool_round = 0
+        while tool_calls and tool_round < max_tool_rounds:
+            tool_round += 1
+            for tc in tool_calls:
+                func_name = tc['function']['name']
+                try:
+                    args = json.loads(tc['function']['arguments']) if tc['function'].get('arguments') else {}
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+                fn = TOOL_FUNCTIONS.get(func_name)
+                result_val = fn(args) if fn else f'Unknown tool: {func_name}'
+                logger.info(f'Tool call [{tool_round}/{max_tool_rounds}]: {func_name}({json.dumps(args, ensure_ascii=False)}) = {result_val}')
+                ai_messages.append({
+                    'role': 'assistant',
+                    'content': None,
+                    'tool_calls': [tc],
+                })
+                ai_messages.append({
+                    'role': 'tool',
+                    'tool_call_id': tc['id'],
+                    'content': str(result_val),
+                })
+            text, tool_calls = call_ai(ai_messages, tools=TOOLS)
+        _current_tool_store = None
+        reply = text
 
     if reply is None:
         reply = fallback_reply(char, msgs, user_msg)
@@ -1072,44 +1428,19 @@ def api_chat():
             reply = reply.replace('[DISCONNECT]', '').strip()
             if not reply:
                 reply = 'Пока.'
-            agent_state['disconnected'] = True
-            agent_state['disconnected_at'] = time.time()
-            store['agent'] = agent_state
 
     logger.info(f'AI Reply: {reply}')
 
     style = char.get('writing_style', '')
-
-    # Split [NEXT] into multiple consecutive messages (all modes)
-    agent_messages = []
-    agent_disconnected = agent_state.get('disconnected', False)
+    extras = []
 
     if reply:
         parts = reply.split('[NEXT]')
         reply = parts[0].strip()
-        extras = [p.strip() for p in parts[1:] if p.strip()]
-
-        if extras:
-            for extra in extras[:3]:
-                extra = apply_writing_style(extra, style)
-                agent_messages.append(extra)
-                msgs.append({'role': 'assistant', 'content': extra})
-        elif agent_state.get('enabled'):
-            # Agent mode fallback: split by double newline if no [NEXT]
-            parts = reply.split('\n\n')
-            parts = [p.strip() for p in parts if p.strip()]
-            if len(parts) > 1:
-                reply = parts[0]
-                extras = parts[1:]
-                all_parts = []
-                for p in [reply] + extras:
-                    all_parts.extend(_split_long_msg(p))
-                reply = all_parts[0]
-                extras = all_parts[1:]
-                for extra in extras[:3]:
-                    extra = apply_writing_style(extra, style)
-                    agent_messages.append(extra)
-                    msgs.append({'role': 'assistant', 'content': extra})
+        extras = [p.strip() for p in parts[1:] if p.strip()][:3]
+        for extra in extras:
+            extra = apply_writing_style(extra, style)
+            msgs.append({'role': 'assistant', 'content': extra})
 
     reply = apply_writing_style(reply, style)
     msgs.append({'role': 'assistant', 'content': reply})
@@ -1117,31 +1448,8 @@ def api_chat():
     store['messages'] = msgs
     return jsonify({
         'reply': reply,
-        'agent_messages': agent_messages,
-        'agent_disconnected': agent_disconnected,
+        'agent_messages': extras,
     })
-
-
-@app.route('/api/agent/poll', methods=['POST'])
-def api_agent_poll():
-    data = request.get_json() or {}
-    token = data.get('token', '')
-    store = char_store.get(token)
-    if not store:
-        return jsonify({'idle': True})
-
-    agent_state = store.get('agent', {'enabled': False})
-    if not agent_state.get('enabled'):
-        return jsonify({'idle': True})
-
-    reconn = _agent_maybe_reconnect(store['character'], agent_state)
-    if reconn:
-        store['agent'] = agent_state
-        style = store['character'].get('writing_style', '')
-        reconn = apply_writing_style(reconn, style)
-        return jsonify({'reconnected': True, 'message': reconn})
-
-    return jsonify({'idle': True})
 
 
 if __name__ == '__main__':

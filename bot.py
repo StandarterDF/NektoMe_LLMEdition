@@ -10,7 +10,7 @@ import asyncio
 import urllib.request
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -41,14 +41,105 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN', '')
 OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', '').rstrip('/')
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
-AI_ENABLED = bool(OPENAI_API_KEY and OPENAI_BASE_URL)
+PROVIDER_TYPE = os.environ.get('PROVIDER_TYPE', 'openai').lower()
 
-AGENT_ENABLED = os.environ.get('AGENT_ENABLED', 'false').lower() == 'true'
-AGENT_MAX_CONSECUTIVE = int(os.environ.get('AGENT_MAX_CONSECUTIVE', '3'))
-AGENT_IDLE_TIMEOUT = int(os.environ.get('AGENT_IDLE_TIMEOUT', '180'))
-AGENT_RECONNECT_DELAY = int(os.environ.get('AGENT_RECONNECT_DELAY', '60'))
 BOT_PROXY_URL = os.environ.get('BOT_PROXY_URL', '') or None
 BOT_USE_PROXY = os.environ.get('BOT_USE_PROXY', 'false').lower() == 'true'
+
+# --- Multi-provider support ---
+# Format in .env:
+#   PROVIDER_COUNT=2
+#   PROVIDER1_NAME=Deepseek
+#   PROVIDER1_TYPE=deepseek
+#   PROVIDER1_BASE_URL=https://api.deepseek.com/v1
+#   PROVIDER1_API_KEY=sk-xxx
+#   PROVIDER1_MODEL=deepseek-v4-flash
+# If PROVIDER_COUNT is not set, falls back to single OPENAI_* + PROVIDER_TYPE
+
+providers = []
+selected_provider = None
+
+def load_providers():
+    global providers
+    count = os.environ.get('PROVIDER_COUNT', '0')
+    if count.isdigit() and int(count) > 0:
+        for i in range(1, int(count) + 1):
+            name = os.environ.get(f'PROVIDER{i}_NAME', f'Provider {i}')
+            ptype = os.environ.get(f'PROVIDER{i}_TYPE', 'openai').lower()
+            base_url = os.environ.get(f'PROVIDER{i}_BASE_URL', '').rstrip('/')
+            api_key = os.environ.get(f'PROVIDER{i}_API_KEY', '')
+            model = os.environ.get(f'PROVIDER{i}_MODEL', 'gpt-4o-mini')
+            if base_url and api_key:
+                providers.append({
+                    'name': name,
+                    'type': ptype,
+                    'base_url': base_url,
+                    'api_key': api_key,
+                    'model': model,
+                })
+    if not providers and OPENAI_BASE_URL and OPENAI_API_KEY:
+        providers.append({
+            'name': 'Default',
+            'type': PROVIDER_TYPE,
+            'base_url': OPENAI_BASE_URL,
+            'api_key': OPENAI_API_KEY,
+            'model': OPENAI_MODEL,
+        })
+
+def select_provider():
+    global selected_provider, OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL, AI_ENABLED, PROVIDER_TYPE
+    if not providers:
+        logger.error('No AI providers configured. Set OPENAI_BASE_URL + OPENAI_API_KEY in .env')
+        AI_ENABLED = False
+        return
+    if len(providers) == 1:
+        selected_provider = providers[0]
+        logger.info(f'Auto-selected provider: {selected_provider["name"]} ({selected_provider["type"]})')
+    else:
+        print('\n' + '=' * 50)
+        print('   Nektome — выбор провайдера')
+        print('=' * 50)
+        for idx, p in enumerate(providers, 1):
+            print(f'  {idx}. {p["name"]} ({p["type"]}) — {p["base_url"]}')
+        print('=' * 50)
+        while True:
+            try:
+                choice = input(f'  Выбери провайдера (1-{len(providers)}): ').strip()
+                idx = int(choice) - 1
+                if 0 <= idx < len(providers):
+                    selected_provider = providers[idx]
+                    break
+            except (ValueError, IndexError):
+                pass
+            print(f'  Введите число от 1 до {len(providers)}')
+        print(f'  Выбран: {selected_provider["name"]}')
+        print('=' * 50 + '\n')
+    OPENAI_BASE_URL = selected_provider['base_url']
+    OPENAI_API_KEY = selected_provider['api_key']
+    OPENAI_MODEL = selected_provider['model']
+    PROVIDER_TYPE = selected_provider['type']
+    AI_ENABLED = bool(OPENAI_API_KEY and OPENAI_BASE_URL)
+
+load_providers()
+select_provider()
+
+def _check_connection(label, proxy_url=None):
+    try:
+        req = urllib.request.Request('https://api.telegram.org')
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({'https': proxy_url, 'http': proxy_url}) if proxy_url
+            else urllib.request.ProxyHandler({})
+        )
+        opener.open(req, timeout=10)
+        logger.info(f'Connection check [{label}]: OK')
+        return True
+    except Exception as e:
+        logger.warning(f'Connection check [{label}]: FAILED ({e})')
+        return False
+
+_check_connection('direct')
+if BOT_USE_PROXY and BOT_PROXY_URL:
+    _check_connection('proxy', BOT_PROXY_URL)
 
 if not BOT_TOKEN:
     logger.error('BOT_TOKEN not set in .env')
@@ -176,13 +267,382 @@ def load_user_data():
 
 load_user_data()
 
-def call_ai(messages):
+CITY_TZ = {
+    'Москва': 3, 'Санкт-Петербург': 3, 'Новосибирск': 7, 'Екатеринбург': 5,
+    'Казань': 3, 'Краснодар': 3, 'Ростов-на-Дону': 3, 'Владивосток': 10,
+    'Нижний Новгород': 3, 'Челябинск': 5, 'Самара': 4, 'Омск': 6,
+    'Воронеж': 3, 'Пермь': 5, 'Волгоград': 3, 'Уфа': 5, 'Красноярск': 7,
+    'Саратов': 4, 'Тюмень': 5, 'Иркутск': 8, 'Хабаровск': 10, 'Ярославль': 3,
+    'Севастополь': 3, 'Калининград': 2, 'Мурманск': 3, 'Сочи': 3, 'Псков': 3,
+    'Великий Новгород': 3, 'Суздаль': 3, 'Владимир': 3, 'Тверь': 3, 'Тула': 3,
+}
+_TZ_CACHE = {}
+
+def _city_now(city=None):
+    if city and city in CITY_TZ:
+        offset_h = CITY_TZ[city]
+    else:
+        offset_h = 3
+    if offset_h not in _TZ_CACHE:
+        _TZ_CACHE[offset_h] = timezone(timedelta(hours=offset_h))
+    return datetime.now(_TZ_CACHE[offset_h])
+
+_BUILTIN_TOOLS = [
+    {
+        'type': 'function',
+        'function': {
+            'name': 'get_current_time',
+            'description': 'Узнать текущее время. Если известен город — укажи его, чтобы время было точным для этого города.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'city': {
+                        'type': 'string',
+                        'description': 'Название города (по-русски). Если не указан — время по Москве (UTC+3).',
+                    },
+                },
+                'required': [],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'get_date',
+            'description': 'Узнать сегодняшнюю дату (число, месяц, год). Если известен город — укажи его, чтобы дата была точной.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'city': {
+                        'type': 'string',
+                        'description': 'Название города (по-русски). Если не указан — по Москве (UTC+3).',
+                    },
+                },
+                'required': [],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'get_weekday',
+            'description': 'Узнать какой сегодня день недели. Если известен город — укажи его, чтобы день был точным.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'city': {
+                        'type': 'string',
+                        'description': 'Название города (по-русски). Если не указан — по Москве (UTC+3).',
+                    },
+                },
+                'required': [],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'roll_dice',
+            'description': 'Бросить кубик с указанным количеством граней. Используется для игр, гаданий и случайных решений.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'sides': {
+                        'type': 'integer',
+                        'description': 'Количество граней кубика (по умолчанию 6)',
+                        'default': 6,
+                    },
+                },
+                'required': [],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'coin_flip',
+            'description': 'Подбросить монетку. Результат: орёл или решка.',
+            'parameters': {
+                'type': 'object',
+                'properties': {},
+                'required': [],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'get_season',
+            'description': 'Узнать текущее время года в указанном городе или полушарии.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'city': {
+                        'type': 'string',
+                        'description': 'Название города (по-русски). Если не указан — по Москве (UTC+3).',
+                    },
+                    'hemisphere': {
+                        'type': 'string',
+                        'description': 'Полушарие: northern (северное) или southern (южное). По умолчанию northern.',
+                        'enum': ['northern', 'southern'],
+                        'default': 'northern',
+                    },
+                },
+                'required': [],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'get_moon_phase',
+            'description': 'Узнать примерную фазу луны на сегодня.',
+            'parameters': {
+                'type': 'object',
+                'properties': {},
+                'required': [],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'days_until',
+            'description': 'Посчитать количество дней до указанной даты (число и месяц).',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'day': {
+                        'type': 'integer',
+                        'description': 'День месяца (1-31)',
+                    },
+                    'month': {
+                        'type': 'integer',
+                        'description': 'Месяц (1-12)',
+                    },
+                },
+                'required': ['day', 'month'],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'zodiac_info',
+            'description': 'Получить информацию о знаке зодиака: даты, стихия, характеристика.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'sign': {
+                        'type': 'string',
+                        'description': 'Название знака зодиака на русском (овен, телец, близнецы, рак, лев, дева, весы, скорпион, стрелец, козерог, водолей, рыбы)',
+                    },
+                },
+                'required': ['sign'],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'remember',
+            'description': 'Запомнить важный факт о собеседнике. Используй, когда узнаёшь что-то новое и важное, что стоит помнить в будущих разговорах. НЕ запоминай факты о себе — только о пользователе.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'fact': {
+                        'type': 'string',
+                        'description': 'Факт о собеседнике для запоминания',
+                    },
+                    'importance': {
+                        'type': 'integer',
+                        'description': 'Важность от 1 до 10',
+                    },
+                },
+                'required': ['fact', 'importance'],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'forget',
+            'description': 'Забыть ранее запомненный факт о собеседнике по его ID. Используй, если факт устарел или оказался неверным.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'fact_id': {
+                        'type': 'integer',
+                        'description': 'ID факта для удаления',
+                    },
+                },
+                'required': ['fact_id'],
+            },
+        },
+    },
+]
+
+_ZODIAC_DATA = {
+    'овен': '21 марта — 19 апреля. Стихия: Огонь. Характер: энергичный, импульсивный, лидерский.',
+    'телец': '20 апреля — 20 мая. Стихия: Земля. Характер: упрямый, надёжный, чувственный.',
+    'близнецы': '21 мая — 20 июня. Стихия: Воздух. Характер: общительный, любопытный, переменчивый.',
+    'рак': '21 июня — 22 июля. Стихия: Вода. Характер: эмоциональный, заботливый, интуитивный.',
+    'лев': '23 июля — 22 августа. Стихия: Огонь. Характер: гордый, щедрый, артистичный.',
+    'дева': '23 августа — 22 сентября. Стихия: Земля. Характер: практичный, перфекционист, аналитичный.',
+    'весы': '23 сентября — 22 октября. Стихия: Воздух. Характер: дипломатичный, справедливый, нерешительный.',
+    'скорпион': '23 октября — 21 ноября. Стихия: Вода. Характер: страстный, загадочный, волевой.',
+    'стрелец': '22 ноября — 21 декабря. Стихия: Огонь. Характер: оптимистичный, свободолюбивый, прямолинейный.',
+    'козерог': '22 декабря — 19 января. Стихия: Земля. Характер: амбициозный, дисциплинированный, терпеливый.',
+    'водолей': '20 января — 18 февраля. Стихия: Воздух. Характер: независимый, изобретательный, гуманист.',
+    'рыбы': '19 февраля — 20 марта. Стихия: Вода. Характер: мечтательный, эмпатичный, творческий.',
+}
+
+_TOOL_FUNCTIONS_MAP = {
+    'get_current_time': lambda args: _city_now(args.get('city')).strftime('%H:%M:%S'),
+    'get_date': lambda args: _city_now(args.get('city')).strftime('%d.%m.%Y'),
+    'get_weekday': lambda args: {
+        0: 'понедельник', 1: 'вторник', 2: 'среда', 3: 'четверг',
+        4: 'пятница', 5: 'суббота', 6: 'воскресенье',
+    }[_city_now(args.get('city')).weekday()],
+    'roll_dice': lambda args: f'Выпало: {random.randint(1, args.get("sides", 6))}',
+    'coin_flip': lambda args: random.choice(['Орёл', 'Решка']),
+    'get_season': lambda args: _calc_season(args.get('hemisphere', 'northern'), args.get('city')),
+    'get_moon_phase': lambda args: _calc_moon_phase(),
+    'days_until': lambda args: _calc_days_until(args.get('day', 1), args.get('month', 1)),
+    'zodiac_info': lambda args: _ZODIAC_DATA.get(args.get('sign', '').lower(), 'Знак не найден. Попробуй: овен, телец, близнецы, рак, лев, дева, весы, скорпион, стрелец, козерог, водолей, рыбы.'),
+    'remember': lambda args: _do_remember(args),
+    'forget': lambda args: _do_forget(args),
+}
+
+_current_tool_store = None
+
+
+def _build_memory_block(memory):
+    if not memory or not memory.get('facts'):
+        return None
+    now = time.time()
+    facts = sorted(memory['facts'], key=lambda f: (-f['importance'], -f['accessed']))[:15]
+    for f in facts:
+        f['accessed'] = now
+    lines = ['[ПАМЯТЬ]']
+    for f in facts:
+        lines.append(f'[id={f["id"]}] {f["text"]} ({f["importance"]}/10)')
+    return '\n'.join(lines)
+
+
+def _evict_memory(memory):
+    if len(memory['facts']) <= 50:
+        return
+    memory['facts'].sort(key=lambda f: (-f['importance'], -f['accessed']))
+    memory['facts'] = memory['facts'][:50]
+
+
+def _do_remember(args):
+    global _current_tool_store
+    store = _current_tool_store
+    if not store:
+        return 'Ошибка: нет активной сессии'
+    memory = store.setdefault('memory', {'facts': [], 'next_id': 0, 'lock': False})
+    if memory.get('lock'):
+        return 'Нельзя запоминать так часто. Подожди.'
+    fact = args.get('fact', '').strip()
+    importance = args.get('importance', 5)
+    if not fact:
+        return 'Не указан факт для запоминания.'
+    memory['facts'].append({
+        'id': memory['next_id'],
+        'text': fact[:200],
+        'importance': min(max(importance, 1), 10),
+        'created': time.time(),
+        'accessed': time.time(),
+    })
+    memory['next_id'] += 1
+    memory['lock'] = True
+    _evict_memory(memory)
+    return f'Запомнила: {fact[:200]} (важность {importance}/10)'
+
+
+def _do_forget(args):
+    global _current_tool_store
+    store = _current_tool_store
+    if not store:
+        return 'Ошибка: нет активной сессии'
+    memory = store.get('memory', {})
+    fact_id = args.get('fact_id', -1)
+    before = len(memory.get('facts', []))
+    memory['facts'] = [f for f in memory.get('facts', []) if f['id'] != fact_id]
+    after = len(memory['facts'])
+    if before != after:
+        return f'Забыла факт #{fact_id}'
+    return f'Факт #{fact_id} не найден'
+
+def _calc_season(hemisphere, city=None):
+    m = _city_now(city).month
+    if hemisphere == 'southern':
+        if m in (12, 1, 2): return 'лето'
+        if m in (3, 4, 5): return 'осень'
+        if m in (6, 7, 8): return 'зима'
+        return 'весна'
+    else:
+        if m in (12, 1, 2): return 'зима'
+        if m in (3, 4, 5): return 'весна'
+        if m in (6, 7, 8): return 'лето'
+        return 'осень'
+
+def _calc_moon_phase():
+    d = datetime.now().day
+    cycle_pos = d % 29.5
+    if cycle_pos < 1.5: return 'новолуние'
+    if cycle_pos < 7: return 'растущий серп'
+    if cycle_pos < 8.5: return 'первая четверть'
+    if cycle_pos < 14: return 'растущая луна'
+    if cycle_pos < 15.5: return 'полнолуние'
+    if cycle_pos < 21: return 'убывающая луна'
+    if cycle_pos < 22.5: return 'последняя четверть'
+    return 'старый серп'
+
+def _calc_days_until(day, month):
+    now = datetime.now()
+    target = now.replace(month=month, day=day)
+    if target <= now:
+        target = target.replace(year=target.year + 1)
+    return str((target - now).days)
+
+def get_tools():
+    admin_config = load_admin_config()
+    disabled = admin_config.get('disabled_tools', [])
+    return [t for t in _BUILTIN_TOOLS if t['function']['name'] not in disabled]
+
+def get_tool_functions():
+    return _TOOL_FUNCTIONS_MAP
+
+ADMIN_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'admin_settings.json')
+
+def load_admin_config():
+    if not os.path.exists(ADMIN_CONFIG_FILE):
+        return {'disabled_tools': []}
+    try:
+        with open(ADMIN_CONFIG_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {'disabled_tools': []}
+
+def save_admin_config(config):
+    try:
+        with open(ADMIN_CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f'Failed to save admin config: {e}')
+
+def call_ai(messages, tools=None):
     url = f"{OPENAI_BASE_URL}/chat/completions"
     payload = {
         'model': OPENAI_MODEL,
         'messages': messages,
         'temperature': 0.9,
     }
+    if tools:
+        payload['tools'] = tools
     req = urllib.request.Request(url, data=json.dumps(payload, ensure_ascii=False).encode('utf-8'), method='POST')
     req.add_header('Content-Type', 'application/json')
     if OPENAI_API_KEY:
@@ -192,10 +652,96 @@ def call_ai(messages):
         result = json.loads(resp.read().decode('utf-8'))
         msg = result['choices'][0]['message']
         text = (msg.get('content') or '').strip()
-        return text
+        tool_calls = msg.get('tool_calls')
+        _log_ai_request()
+        return text, tool_calls
     except Exception as e:
         logger.error(f'AI call failed: {e}')
+        return None, None
+
+def check_deepseek_balance():
+    url = OPENAI_BASE_URL.rstrip('/')
+    if url.endswith('/v1'):
+        url = url[:-3]
+    url = url.rstrip('/') + '/user/balance'
+    req = urllib.request.Request(url, method='GET')
+    req.add_header('Accept', 'application/json')
+    if OPENAI_API_KEY:
+        req.add_header('Authorization', f'Bearer {OPENAI_API_KEY}')
+    try:
+        resp = urllib.request.urlopen(req, timeout=15)
+        data = json.loads(resp.read().decode('utf-8'))
+        return data
+    except Exception as e:
+        logger.error(f'Balance check failed: {e}')
         return None
+
+_REQUEST_LOG_FILE = os.path.join(os.path.dirname(__file__), 'request_log.json')
+_session_request_count = 0
+_session_start = time.time()
+
+def _load_request_log():
+    if not os.path.exists(_REQUEST_LOG_FILE):
+        return {'daily': {}, 'total': 0}
+    try:
+        with open(_REQUEST_LOG_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {'daily': {}, 'total': 0}
+
+def _save_request_log(log):
+    try:
+        with open(_REQUEST_LOG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(log, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f'Failed to save request log: {e}')
+
+def _log_ai_request():
+    global _session_request_count
+    _session_request_count += 1
+    log = _load_request_log()
+    today = datetime.now().strftime('%Y-%m-%d')
+    daily = log.get('daily', {})
+    daily[today] = daily.get(today, 0) + 1
+    log['daily'] = daily
+    log['total'] = log.get('total', 0) + 1
+    _save_request_log(log)
+
+def _get_request_stats():
+    log = _load_request_log()
+    daily = log.get('daily', {})
+    today = datetime.now().strftime('%Y-%m-%d')
+    today_count = daily.get(today, 0)
+    last_7 = 0
+    last_30 = 0
+    from datetime import timedelta
+    for i in range(30):
+        day = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
+        if i < 7:
+            last_7 += daily.get(day, 0)
+        last_30 += daily.get(day, 0)
+    total = log.get('total', 0)
+    return _session_request_count, last_7, last_30, total
+
+def format_balance(data):
+    balance_infos = data.get('balance_infos', [])
+    if not balance_infos:
+        return 'Не удалось получить баланс.'
+    info = balance_infos[0]
+    currency = info.get('currency', 'USD')
+    total = info.get('total_balance', '0')
+    topped_up = info.get('topped_up_balance', '0')
+    session, week, month, all_time = _get_request_stats()
+    return (
+        f'💰 *Баланс Deepseek*\n\n'
+        f'Всего: `{total}` {currency}\n'
+        f'Пополнено: `{topped_up}` {currency}\n\n'
+        f'📊 *Статистика AI запросов*\n'
+        f'За текущий запуск: {session}\n'
+        f'За 7 дней: {week}\n'
+        f'За 30 дней: {month}\n'
+        f'Всего: {all_time}'
+    )
 
 def make_char_json(char):
     d = {}
@@ -897,6 +1443,8 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, edi
         [InlineKeyboardButton(old_text, callback_data='set_old_encounters')],
     ]
     buttons.append([InlineKeyboardButton("🔍 Поиск собеседника", callback_data='next_char')])
+    if uid in ALLOWED_IDS:
+        buttons.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data='admin_panel')])
     buttons.append([InlineKeyboardButton("❓ Помощь", callback_data='help')])
 
     text = (
@@ -1045,6 +1593,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_card(update, context)
         return
 
+    if data == 'admin_panel':
+        await show_admin_panel(update, context)
+        return
+
+    if data.startswith('admintool_') or data in ('admin_balance', 'admin_fc_settings'):
+        await admin_button(update, context)
+        return
+
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "*Nektome Bot — Помощь*\n\n"
@@ -1154,6 +1710,7 @@ async def generate_character(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     user_data[uid]['char'] = char_data
     user_data[uid]['messages'] = initial_msgs
+    user_data[uid]['memory'] = {'facts': [], 'next_id': 0}
     user_data[uid]['char_count'] = user_data[uid].get('char_count', 0) + 1
     user_data[uid]['old_context'] = old_context
 
@@ -1237,6 +1794,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msgs.append({'role': 'user', 'content': user_msg})
     user_data[uid]['msg_count'] = user_data[uid].get('msg_count', 0) + 1
 
+    if user_data[uid].get('memory'):
+        user_data[uid]['memory']['lock'] = False
+
     try:
         await update.message.chat.send_action(action='typing')
     except Exception:
@@ -1288,13 +1848,50 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     instruction = build_instruction(mode=topic, oversharing=oversharing, chat_duration=char.get('chat_duration', 'пока не надоест'))
     ai_messages.append({'role': 'system', 'content': instruction})
 
+    memory_block = _build_memory_block(user_data[uid].get('memory'))
+    if memory_block:
+        insert_pos = max(1, len(ai_messages) - 3)
+        ai_messages.insert(insert_pos, {'role': 'system', 'content': memory_block})
+
     reply = None
     ai_time = 0.0
     if AI_ENABLED:
+        global _current_tool_store
+        _current_tool_store = user_data[uid]
         user_data[uid]['prompt_count'] = user_data[uid].get('prompt_count', 0) + 1
         t0 = time.time()
-        reply = call_ai(ai_messages)
+        active_tools = get_tools()
+        text, tool_calls = call_ai(ai_messages, tools=active_tools)
+        max_tool_rounds = 5
+        tool_round = 0
+        while tool_calls and tool_round < max_tool_rounds:
+            tool_round += 1
+            for tc in tool_calls:
+                func_name = tc['function']['name']
+                try:
+                    args = json.loads(tc['function']['arguments']) if tc['function'].get('arguments') else {}
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+                fn = get_tool_functions().get(func_name)
+                if fn:
+                    result = fn(args)
+                else:
+                    result = f'Unknown tool: {func_name}'
+                logger.info(f'User {uid} | Tool call [{tool_round}/{max_tool_rounds}]: {func_name}({json.dumps(args, ensure_ascii=False)}) = {result}')
+                ai_messages.append({
+                    'role': 'assistant',
+                    'content': None,
+                    'tool_calls': [tc],
+                })
+                ai_messages.append({
+                    'role': 'tool',
+                    'tool_call_id': tc['id'],
+                    'content': str(result),
+                })
+            text, tool_calls = call_ai(ai_messages, tools=active_tools)
+        _current_tool_store = None
         elapsed = time.time() - t0
+        reply = text
         if reply:
             ai_time = elapsed
         else:
@@ -1386,6 +1983,95 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode='Markdown')
 
+async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_allowed(uid):
+        return
+    if PROVIDER_TYPE != 'deepseek':
+        await update.message.reply_text('Баланс доступен только для Deepseek провайдера.')
+        return
+    await update.message.reply_text('🔍 Запрашиваю баланс Deepseek...')
+    try:
+        await update.message.chat.send_action(action='typing')
+    except Exception:
+        pass
+    data = check_deepseek_balance()
+    if data is None:
+        await update.message.reply_text('❌ Не удалось получить баланс. Проверь API ключ.')
+        return
+    await update.message.reply_text(format_balance(data), parse_mode='Markdown')
+
+async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_allowed(uid):
+        return
+    await show_admin_panel(update, context, edit=True if update.callback_query else False)
+
+async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=True):
+    buttons = []
+    if PROVIDER_TYPE == 'deepseek':
+        buttons.append([InlineKeyboardButton("💰 Баланс Deepseek", callback_data='admin_balance')])
+    buttons.append([InlineKeyboardButton("🔧 Настройка Function Calling", callback_data='admin_fc_settings')])
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data='back_menu')])
+    text = '*⚙️ Админ-панель*'
+    if edit:
+        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+    else:
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+
+async def show_fc_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_config = load_admin_config()
+    disabled = admin_config.get('disabled_tools', [])
+    all_tools = [t['function']['name'] for t in _BUILTIN_TOOLS]
+    buttons = []
+    for name in all_tools:
+        label = f"{'✅' if name not in disabled else '❌'} {name}"
+        buttons.append([InlineKeyboardButton(label, callback_data=f'admintool_{name}')])
+    buttons.append([InlineKeyboardButton("🔙 Админ-панель", callback_data='admin_panel')])
+    text = '*🔧 Настройка Function Calling*\n\nОтметь какие инструменты доступны AI:'
+    await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+
+async def admin_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data == 'admin_balance':
+        if PROVIDER_TYPE != 'deepseek':
+            await query.edit_message_text('Баланс доступен только для Deepseek провайдера.')
+            return
+        await query.edit_message_text('🔍 Запрашиваю баланс Deepseek...')
+        resp = check_deepseek_balance()
+        if resp is None:
+            await query.edit_message_text(
+                '❌ Не удалось получить баланс. Проверь API ключ.',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Админ-панель", callback_data='admin_panel')]]),
+            )
+            return
+        await query.edit_message_text(
+            format_balance(resp),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Админ-панель", callback_data='admin_panel')]]),
+            parse_mode='Markdown',
+        )
+        return
+    if data == 'admin_fc_settings':
+        await show_fc_settings(update, context)
+        return
+    if data.startswith('admintool_'):
+        tool_name = data.replace('admintool_', '')
+        admin_config = load_admin_config()
+        disabled = admin_config.get('disabled_tools', [])
+        if tool_name in disabled:
+            disabled.remove(tool_name)
+        else:
+            disabled.append(tool_name)
+        admin_config['disabled_tools'] = disabled
+        save_admin_config(admin_config)
+        await show_fc_settings(update, context)
+        return
+    if data == 'admin_panel':
+        await show_admin_panel(update, context, edit=True)
+        return
+
 async def _set_commands(app):
     commands = [
         ('start', 'Главное меню'),
@@ -1393,6 +2079,8 @@ async def _set_commands(app):
         ('settings', 'Настройки'),
         ('stats', 'Моя статистика'),
     ]
+    if ALLOWED_IDS:
+        commands.append(('admin', 'Админ-панель'))
     await app.bot.set_my_commands(commands)
 
 def main():
@@ -1411,6 +2099,8 @@ def main():
     app.add_handler(CommandHandler('card', card_command))
     app.add_handler(CommandHandler('settings', settings_command))
     app.add_handler(CommandHandler('stats', stats_command))
+    if ALLOWED_IDS:
+        app.add_handler(CommandHandler('admin', admin_start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
