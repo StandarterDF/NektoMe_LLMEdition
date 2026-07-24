@@ -63,21 +63,6 @@ python app.py
 4. Дождитесь подключения собеседника
 5. Общайтесь в чате
 
-### Agent Mode
-
-При включении `AGENT_ENABLED=true` AI может:
-- Писать несколько сообщений подряд (с задержками как живой человек)
-- Отключаться и переподключаться через случайное время
-- Использовать инструменты: `send_message` и `disconnect`
-
-Настройка в `.env`:
-```
-AGENT_ENABLED=true
-AGENT_MAX_CONSECUTIVE=3
-AGENT_IDLE_TIMEOUT=180
-AGENT_RECONNECT_DELAY=60
-```
-
 ## Web UI
 
 | Светлая тема | Тёмная тема |
@@ -116,7 +101,6 @@ python bot.py
 | `POST` | `/api/generate` | Сгенерировать персонажа |
 | `POST` | `/api/chat` | Отправить сообщение |
 | `GET` | `/api/online` | Количество людей онлайн |
-| `POST` | `/api/agent/poll` | Polling для agent mode |
 
 ## Генерация персонажа
 
@@ -139,10 +123,6 @@ python bot.py
 | `OPENAI_BASE_URL` | `https://api.deepseek.com/v1` | OpenAI-совместимый эндпоинт |
 | `OPENAI_API_KEY` | — | API-ключ |
 | `OPENAI_MODEL` | `deepseek-v4-flash` | Название модели |
-| `AGENT_ENABLED` | `false` | Включить agent mode |
-| `AGENT_MAX_CONSECUTIVE` | `3` | Макс. сообщений подряд |
-| `AGENT_IDLE_TIMEOUT` | `180` | Таймаут бездействия (сек) |
-| `AGENT_RECONNECT_DELAY` | `60` | Задержка перед переподключением (сек) |
 | `BOT_TOKEN` | — | Токен Telegram-бота |
 
 ## Зависимости

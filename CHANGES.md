@@ -1,15 +1,1 @@
-- AGENTS.md: добавлена инструкция о записи изменений в CHANGES.md
-- bot.py + app.py: добавлена поддержка нескольких провайдеров AI (PROVIDER_COUNT/PROVIDER1..N), выбор при старте
-- .env: добавлена переменная PROVIDER_TYPE (openai/deepseek)
-- bot.py: добавлена команда /balance и кнопка для админов — проверка баланса Deepseek API
-- .env.example: задокументирован новый формат провайдеров
-- ПОЛНОСТЬЮ удалён AGENT mode (агент-режим с переподключениями) из app.py и bot.py
-- Добавлена поддержка Tool Calls (function calling): нейросеть может вызывать простые инструменты (get_current_time, get_date, get_weekday)
-- Удалён эндпоинт /api/agent/poll из app.py
-- Добавлены новые инструменты: roll_dice, coin_flip, get_season, get_moon_phase, days_until, zodiac_info
-- bot.py: исправлен парсинг баланса Deepseek (правильные поля total_balance/topped_up_balance/granted_balance)
-- bot.py: кнопка баланса заменена на "⚙️ Админ-панель" — админ может включать/отключать инструменты AI
-- bot.py: добавлена команда /admin, админ-панель сохраняется в admin_settings.json
-- app.py + bot.py: добавлена динамическая память — инструменты remember/fact и forget/fact_id, факты хранятся в памяти сессии и динамически вставляются в messages перед запросом к AI
-- bot.py: баланс Deepseek — убрано "Подарено", добавлена статистика AI запросов (за сессию, 7 дней, 30 дней, всего). Логирование запросов в request_log.json (app.py + bot.py)
-- app.py + bot.py: get_current_time/get_date/get_weekday/get_season теперь принимают опциональный параметр city и показывают время для указанного города (по таймзоне из CITY_TZ)
+- README.md: удалены все упоминания Agent Mode (устаревший функционал, полностью удалён из кода)
