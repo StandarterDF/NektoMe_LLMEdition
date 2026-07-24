@@ -5,6 +5,7 @@ import os
 import re
 import re
 import sys
+import hashlib
 import asyncio
 import urllib.request
 import logging
@@ -64,6 +65,80 @@ if ALLOWED_IDS_STR:
             except ValueError:
                 pass
 
+CHAT_SAVE_IDS_STR = os.environ.get('CHAT_SAVE_IDS', '')
+CHAT_SAVE_IDS = set()
+if CHAT_SAVE_IDS_STR:
+    for part in CHAT_SAVE_IDS_STR.split(','):
+        part = part.strip()
+        if part:
+            try:
+                CHAT_SAVE_IDS.add(int(part))
+            except ValueError:
+                pass
+
+ENABLE_OLD_ENCOUNTERS = os.environ.get('ENABLE_OLD_ENCOUNTERS', 'true').lower() == 'true'
+
+CHATS_DIR = os.path.join(os.path.dirname(__file__), 'chats')
+
+def save_chat_log(uid, char_data, messages):
+    if not CHAT_SAVE_IDS or uid not in CHAT_SAVE_IDS:
+        return
+    try:
+        chat_dir = os.path.join(CHATS_DIR, str(uid))
+        os.makedirs(chat_dir, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        name = char_data.get('name', 'unknown')
+        surname = char_data.get('surname', '')
+        raw = f'{timestamp}_{name}_{surname}'.encode('utf-8')
+        hash_suffix = hashlib.md5(raw).hexdigest()[:8]
+        filename = f'{timestamp}_{hash_suffix}.json'
+        filepath = os.path.join(chat_dir, filename)
+        log = {
+            'chat_id': uid,
+            'timestamp': timestamp,
+            'character': {k: v for k, v in char_data.items() if k != 'system_prompt'},
+            'messages': messages,
+        }
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(log, f, ensure_ascii=False, indent=2)
+        logger.info(f'Chat log saved for user {uid}: {filename}')
+    except Exception as e:
+        logger.error(f'Failed to save chat log for user {uid}: {e}')
+
+def _load_old_chat_logs(uid):
+    logs = []
+    chat_dir = os.path.join(CHATS_DIR, str(uid))
+    if not os.path.isdir(chat_dir):
+        return logs
+    for fname in os.listdir(chat_dir):
+        if not fname.endswith('.json'):
+            continue
+        try:
+            with open(os.path.join(chat_dir, fname), encoding='utf-8') as f:
+                logs.append(json.load(f))
+        except Exception as e:
+            logger.error(f'Failed to load chat log {fname}: {e}')
+    return logs
+
+def _pick_old_encounter(uid):
+    if not ENABLE_OLD_ENCOUNTERS:
+        return None
+    chance = 0.03 + random.random() * 0.02
+    if random.random() >= chance:
+        return None
+    logs = _load_old_chat_logs(uid)
+    if not logs:
+        return None
+    log = random.choice(logs)
+    char_data = log.get('character', {})
+    all_msgs = log.get('messages', [])
+    # take last 15 messages that are user/assistant pairs
+    old_msgs = [m for m in all_msgs if m['role'] in ('user', 'assistant')][-15:]
+    if not old_msgs:
+        return None
+    logger.info(f'Old encounter! User {uid} re-meets {char_data.get("name","?")}')
+    return char_data, old_msgs
+
 def is_allowed(user_id):
     return not ALLOWED_IDS or user_id in ALLOWED_IDS
 
@@ -93,7 +168,9 @@ def load_user_data():
                     'partner_age': [],
                     'own_gender': 'any',
                     'topic': 'chat',
+                    'old_encounters': False,
                 })
+                user_data[uid]['settings'].setdefault('old_encounters', False)
     except Exception as e:
         logger.error(f'Failed to load user data: {e}')
 
@@ -148,6 +225,7 @@ def make_char_json(char):
         'current_mood', 'hidden_motive', 'chat_opener', 'skip_factors',
         'harassment_reaction', 'fav_topics', 'taboo_topics',
         'lying_tendency', 'oversharing_level', 'default_attitude', 'weakness',
+        'chat_duration',
         'favorite_movie_titles', 'favorite_book_titles', 'favorite_music_artists',
     ]:
         v = getattr(char, field, None)
@@ -293,6 +371,7 @@ def build_system_prompt(char, mode='chat', user_gender=None):
     lines.append(f"Текущая ситуация: {v('current_situation')}")
     lines.append(f"Скрытый мотив: {v('hidden_motive')}")
     lines.append(f"Контекст входа: {v('entry_context')}")
+    lines.append(f"Время в чате: {v('chat_duration')}")
     lines.append('')
     lines.append('=== ПРЕДЫСТОРИЯ ===')
     lines.append(v('backstory'))
@@ -339,7 +418,7 @@ def build_system_prompt(char, mode='chat', user_gender=None):
             lines.append(f'{v("name")}: Ой, ну я вчера такое видела! Короче, иду я по парку, и тут...')
     return '\n'.join(lines)
 
-def build_instruction(mode='chat', user_gender=None, oversharing=5):
+def build_instruction(mode='chat', user_gender=None, oversharing=5, chat_duration=''):
     gender_hint = ''
     if user_gender == 'male':
         gender_hint = '\nВАЖНО: Твой собеседник — мужчина. Если он представится женским именем — это странно, отреагируй на это.\n'
@@ -352,8 +431,12 @@ def build_instruction(mode='chat', user_gender=None, oversharing=5):
             'Формат: ты пишешь в текстовом мессенджере с телефона. '
             'Следуй своему профилю выше. Пиши МАКСИМУМ 15-25 слов (1-3 предложения). '
             'Можешь разделять сообщения через [NEXT], чтобы отправить два сообщения подряд с паузой. '
+            'Ты здесь на ' + chat_duration + '. Ты только зашла — впереди много времени, не торопись уходить. '
             'Если хочешь закончить разговор — добавь в конец токен [DISCONNECT]. '
-            'Пример: «Пока! [DISCONNECT]»\n\n'
+            'Пример: «Пока! [DISCONNECT]»\n'
+            'ВАЖНО: Не используй [DISCONNECT] из-за времени («поздно», «пора спать», «завтра дела») — '
+            'ты сама выбрала зайти именно сейчас, и твоё время позволяет. '
+            'Используй [DISCONNECT] только если собеседник грубит, шлёт дикпики или разговор зашёл в тупик.\n\n'
             f'Твой уровень откровенности — {oversharing}/10. '
             'Если не хочешь отвечать на личные вопросы — уклоняйся или переводи в пошлость.\n\n'
             'Не выдумывай факты, родственников или хобби, которых нет в профиле. '
@@ -382,7 +465,11 @@ def build_instruction(mode='chat', user_gender=None, oversharing=5):
             'Формат: ролевая игра в нарративном стиле. '
             'Следуй своему профилю выше. Пиши МАКСИМУМ 20-35 слов (2-4 предложения). '
             'Можешь разделять действия через [NEXT] для паузы. '
-            'Если хочешь закончить разговор — добавь в конец токен [DISCONNECT].\n\n'
+            'Ты здесь на ' + chat_duration + '. Ты только зашла — впереди много времени, не торопись уходить. '
+            'Если хочешь закончить разговор — добавь в конец токен [DISCONNECT].\n'
+            'ВАЖНО: Не используй [DISCONNECT] из-за времени («поздно», «пора спать», «завтра дела») — '
+            'ты сама выбрала зайти именно сейчас, и твоё время позволяет. '
+            'Используй [DISCONNECT] только если собеседник грубит или разговор зашёл в тупик.\n\n'
             f'Твой уровень откровенности — {oversharing}/10. '
             'Если персонаж не хочет отвечать на вопрос — он уклоняется или переводит тему.\n\n'
             'Не выдумывай факты, родственников или хобби, которых нет в профиле. '
@@ -412,8 +499,12 @@ def build_instruction(mode='chat', user_gender=None, oversharing=5):
             'Следуй своему профилю выше. Пиши МАКСИМУМ 15-20 слов (1-2 предложения). '
             'Можешь разделять сообщения через [NEXT], чтобы отправить два сообщения подряд с паузой. '
             'Например: «Привет! [NEXT] Как дела?» — это отправится как два отдельных сообщения.\n'
+            'Ты здесь на ' + chat_duration + '. Ты только зашла — впереди много времени, не торопись уходить. '
             'Если хочешь закончить разговор — добавь в конец токен [DISCONNECT]. '
-            'Пример: «Пока! [DISCONNECT]»\n\n'
+            'Пример: «Пока! [DISCONNECT]»\n'
+            'ВАЖНО: Не используй [DISCONNECT] из-за времени («поздно», «пора спать», «завтра дела») — '
+            'ты сама выбрала зайти именно сейчас, и твоё время позволяет. '
+            'Используй [DISCONNECT] только если собеседник грубит, шлёт дикпики или разговор зашёл в тупик.\n\n'
             f'Твой уровень откровенности — {oversharing}/10. Чем он ниже, тем чаще ты уклоняешься от личных вопросов (возраст, город, работа, отношения). '
             'Если не хочешь отвечать — уклоняйся или меняй тему.\n\n'
             'Не выдумывай факты, родственников или хобби, которых нет в профиле. '
@@ -765,6 +856,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'partner_age': [],
                 'own_gender': 'any',
                 'topic': 'chat',
+                'old_encounters': False,
             },
             'char_count': 0,
             'msg_count': 0,
@@ -790,11 +882,19 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, edi
     age_text = ', '.join(str(age_map.get(a, a)) for a in settings.get('partner_age', [])) if settings.get('partner_age') else 'Любой'
     topic_text = topic_map.get(settings.get('topic', 'chat'), 'Обычный')
 
+    old_enc = settings.get('old_encounters', False)
+    forced_old = uid in CHAT_SAVE_IDS and ENABLE_OLD_ENCOUNTERS
+    if forced_old or (old_enc and ENABLE_OLD_ENCOUNTERS):
+        old_text = 'Старые встречи: ✓'
+    else:
+        old_text = 'Старые встречи: ✗'
+
     buttons = [
         [InlineKeyboardButton(f"Пол собеседника: {gender_text}", callback_data='set_gender')],
         [InlineKeyboardButton(f"Мой пол: {own_gender_text}", callback_data='set_own_gender')],
         [InlineKeyboardButton(f"Возраст: {age_text}", callback_data='set_age')],
         [InlineKeyboardButton(f"Режим: {topic_text}", callback_data='set_topic')],
+        [InlineKeyboardButton(old_text, callback_data='set_old_encounters')],
     ]
     buttons.append([InlineKeyboardButton("🔍 Поиск собеседника", callback_data='next_char')])
     buttons.append([InlineKeyboardButton("❓ Помощь", callback_data='help')])
@@ -806,6 +906,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, edi
         f"• Мой пол: {own_gender_text}\n"
         f"• Возраст: {age_text}\n"
         f"• Режим: {topic_text}\n"
+        f"• Старые встречи: {'✓ (принудительно)' if forced_old else ('✓' if old_enc and ENABLE_OLD_ENCOUNTERS else '✗')}\n"
     )
     if not is_chatting:
         text += "\n💬 Сейчас ни с кем не общаетесь"
@@ -922,6 +1023,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_main_menu(update, context, edit=True)
         return
 
+    if data == 'set_old_encounters':
+        if uid in CHAT_SAVE_IDS:
+            await query.answer('Старые встречи принудительно включены (ID в CHAT_SAVE_IDS)', show_alert=True)
+            return
+        if uid in user_data:
+            user_data[uid]['settings']['old_encounters'] = not user_data[uid]['settings'].get('old_encounters', False)
+            save_user_data()
+        await show_main_menu(update, context, edit=True)
+        return
+
     if data == 'back_menu':
         await show_main_menu(update, context, edit=True)
         return
@@ -992,21 +1103,42 @@ async def generate_character(update: Update, context: ContextTypes.DEFAULT_TYPE)
     partner_age = settings.get('partner_age', [])
     topic = settings.get('topic', 'chat')
 
-    gender = None
-    if partner_gender == 'male':
-        gender = 'male'
-    elif partner_gender == 'female':
-        gender = 'female'
+    old_allowed = ENABLE_OLD_ENCOUNTERS and (uid in CHAT_SAVE_IDS or settings.get('old_encounters', False))
 
-    age_group = partner_age_groups(partner_age) if partner_age else None
+    # Save old chat before overwriting
+    if user_data[uid].get('char') and user_data[uid].get('messages'):
+        old_char = user_data[uid]['char']
+        old_msgs = user_data[uid]['messages']
+        if len(old_msgs) > 1:
+            save_chat_log(uid, old_char, old_msgs)
 
-    seed = random.randint(0, 2**31)
-    char_obj = gen_char(seed=seed, gender=gender, age_group=age_group, topic=topic)
-    char_data = make_char_json(char_obj)
-    opener = char_data.get('chat_opener', '')
-    logger.info(f'User {uid} | Generated {char_data.get("name","?")} {char_data.get("surname","?")} '
-                f'({char_data.get("age","?")} {char_data.get("gender","?")}) | '
-                f'topic={topic} seed={seed}')
+    # Try old encounter
+    old_encounter = None
+    if old_allowed:
+        old_encounter = _pick_old_encounter(uid)
+
+    if old_encounter:
+        char_data, old_context = old_encounter
+        # Rebuild opener from the old character's data
+        opener = char_data.get('chat_opener', '')
+        logger.info(f'User {uid} | OLD ENCOUNTER: {char_data.get("name","?")} {char_data.get("surname","?")}')
+    else:
+        gender = None
+        if partner_gender == 'male':
+            gender = 'male'
+        elif partner_gender == 'female':
+            gender = 'female'
+
+        age_group = partner_age_groups(partner_age) if partner_age else None
+
+        seed = random.randint(0, 2**31)
+        char_obj = gen_char(seed=seed, gender=gender, age_group=age_group, topic=topic)
+        char_data = make_char_json(char_obj)
+        opener = char_data.get('chat_opener', '')
+        old_context = None
+        logger.info(f'User {uid} | Generated {char_data.get("name","?")} {char_data.get("surname","?")} '
+                    f'({char_data.get("age","?")} {char_data.get("gender","?")}) | '
+                    f'topic={topic} seed={seed}')
 
     initial_msgs = []
     now = datetime.now()
@@ -1023,6 +1155,7 @@ async def generate_character(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_data[uid]['char'] = char_data
     user_data[uid]['messages'] = initial_msgs
     user_data[uid]['char_count'] = user_data[uid].get('char_count', 0) + 1
+    user_data[uid]['old_context'] = old_context
 
     name = char_data.get('name', '?')
     surname = char_data.get('surname', '')
@@ -1113,6 +1246,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     system_prompt = build_system_prompt(char, mode=topic, user_gender=user_gender)
     ai_messages = [{'role': 'system', 'content': system_prompt}]
 
+    # Inject old encounter context if present (new chat with familiar person)
+    if user_data[uid].get('old_context'):
+        ctx = user_data[uid].pop('old_context')
+        ctx_block = [
+            {'role': 'system', 'content': (
+                '[Это НОВЫЙ чат. Ранее вы уже общались с этим человеком в прошлом. '
+                'Вот последние сообщения из вашего прошлого разговора — они нужны чтобы '
+                'почувствовать контекст, но ты не должна их дословно помнить. '
+                'Относись к собеседнику как к старому знакомому, которого не видела '
+                'какое-то время. Не говори прямо «помню прошлый разговор» — это новый чат. '
+                'Просто будь чуть теплее и естественнее.]'
+            )},
+        ]
+        for m in ctx:
+            ctx_block.append({'role': m['role'], 'content': m['content']})
+        ctx_block.append({'role': 'system', 'content': (
+            '[КОНЕЦ ПРОШЛОГО РАЗГОВОРА. Теперь начинается новый чат. '
+            'Ты чувствуешь лёгкое узнавание, но не помнишь деталей. Продолжай общение естественно.]'
+        )})
+        ai_messages[1:1] = ctx_block
+
     for m in msgs:
         ai_messages.append({'role': m['role'], 'content': m['content']})
 
@@ -1131,7 +1285,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_user_data()
 
     oversharing = char.get('oversharing_level', 5)
-    instruction = build_instruction(mode=topic, oversharing=oversharing)
+    instruction = build_instruction(mode=topic, oversharing=oversharing, chat_duration=char.get('chat_duration', 'пока не надоест'))
     ai_messages.append({'role': 'system', 'content': instruction})
 
     reply = None
@@ -1186,6 +1340,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if disconnected:
         logger.info(f'User {uid} | Character disconnected via [DISCONNECT]')
+        save_chat_log(uid, char, msgs)
         user_data[uid]['char'] = None
         user_data[uid]['messages'] = []
         save_user_data()

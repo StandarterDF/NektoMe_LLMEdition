@@ -24,7 +24,7 @@ from generators.char_data import (
     enemies_pool, sleep_types_pool, personal_scents_pool, health_issues_pool,
     supernatural_beliefs_pool,
     writing_styles, rp_ability_profiles,
-    entry_contexts, current_situations_pool, current_moods_pool,
+    entry_contexts, chat_durations_pool, current_situations_pool, current_moods_pool,
     hidden_motives_pool, chat_openers_pool, chat_openers_male_pool,
     chat_openers_female_pool, chat_openers_flirt_pool, chat_openers_rp_pool,
     skip_factors_pool,
@@ -858,6 +858,40 @@ def generate(seed=None, gender=None, age_group=None, topic=None):
     )
     rp_ability = rp_level in ('активный рп', 'профи рп')
     entry_context = random.choice(entry_contexts)
+
+    # --- Chat duration selection ---
+    hour = datetime.now().hour
+    duration_items = [item[0] for item in chat_durations_pool]
+    duration_weights = [item[1] for item in chat_durations_pool]
+    # Time-of-day modifiers
+    if 22 <= hour or hour < 6:
+        mods = [0.3, 0.7, 1.0, 2.0, 3.0, 1.3]
+    elif 6 <= hour < 12:
+        mods = [2.0, 1.5, 1.2, 0.2, 0.1, 1.0]
+    elif 12 <= hour < 18:
+        mods = [1.5, 1.3, 1.3, 0.6, 0.3, 1.5]
+    else:
+        mods = [1.0, 1.0, 1.5, 1.3, 1.0, 1.3]
+    duration_weights = [int(w * m) for w, m in zip(duration_weights, mods)]
+    # Context override
+    if entry_context in ('зашёл по рекламе', 'просто любопытно', 'случайно наткнулся'):
+        duration_weights[0] = int(duration_weights[0] * 1.5)
+        duration_weights[1] = int(duration_weights[1] * 1.2)
+    if entry_context in ('надеется найти близкого по духу человека', 'надеется встретить кого-то особенного', 'ищет собеседника для долгих разговоров'):
+        duration_weights[0] = 0
+        duration_weights[3] = int(duration_weights[3] * 1.5)
+        duration_weights[5] = int(duration_weights[5] * 1.5)
+    # Age group override
+    if age_group == 'mature':
+        duration_weights[1] = int(duration_weights[1] * 1.3)
+        duration_weights[4] = int(duration_weights[4] * 0.3)
+    elif age_group in ('teen', 'young'):
+        duration_weights[4] = int(duration_weights[4] * 1.5)
+        duration_weights[5] = int(duration_weights[5] * 1.3)
+    duration_weights = [max(1, w) for w in duration_weights]
+    chat_duration = weighted_choice(duration_items, duration_weights)
+    # ---
+
     # Age-filter situations
     if age_group == 'teen':
         teen_ok = [s for s in current_situations_pool if not any(
@@ -1133,6 +1167,7 @@ def generate(seed=None, gender=None, age_group=None, topic=None):
         writing_style=writing_style,
         rp_ability=rp_ability,
         entry_context=entry_context,
+        chat_duration=chat_duration,
         current_situation=current_situation,
         current_mood=current_mood,
         hidden_motive=hidden_motive,

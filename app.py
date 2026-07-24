@@ -4,6 +4,7 @@ import uuid
 import os
 import re
 import sys
+import hashlib
 import urllib.request
 import logging
 import threading
@@ -79,6 +80,82 @@ AGENT_MAX_CONSECUTIVE = int(os.environ.get('AGENT_MAX_CONSECUTIVE', '3'))
 AGENT_IDLE_TIMEOUT = int(os.environ.get('AGENT_IDLE_TIMEOUT', '180'))
 AGENT_RECONNECT_DELAY = int(os.environ.get('AGENT_RECONNECT_DELAY', '60'))
 
+
+CHAT_SAVE_IDS_STR = os.environ.get('CHAT_SAVE_IDS', '')
+CHAT_SAVE_IDS = set()
+if CHAT_SAVE_IDS_STR:
+    for part in CHAT_SAVE_IDS_STR.split(','):
+        part = part.strip()
+        if part:
+            try:
+                CHAT_SAVE_IDS.add(int(part))
+            except ValueError:
+                pass
+
+ENABLE_OLD_ENCOUNTERS = os.environ.get('ENABLE_OLD_ENCOUNTERS', 'true').lower() == 'true'
+
+CHATS_DIR = os.path.join(os.path.dirname(__file__), 'chats')
+
+def save_chat_log_web(old_char, old_msgs, token):
+    """Save chat log from web version (no user_id, keyed by token hash)."""
+    if not old_char or not old_msgs or len(old_msgs) <= 1:
+        return
+    try:
+        chat_dir = os.path.join(CHATS_DIR, '_web')
+        os.makedirs(chat_dir, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        hash_suffix = hashlib.md5(token.encode('utf-8')).hexdigest()[:8]
+        name = old_char.get('name', 'unknown')
+        filename = f'{timestamp}_{name}_{hash_suffix}.json'
+        filepath = os.path.join(chat_dir, filename)
+        log = {
+            'chat_id': f'web_{hash_suffix}',
+            'timestamp': timestamp,
+            'character': {k: v for k, v in old_char.items() if k != 'system_prompt'},
+            'messages': old_msgs,
+        }
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(log, f, ensure_ascii=False, indent=2)
+        logger.info(f'Chat log saved (web): {filename}')
+    except Exception as e:
+        logger.error(f'Failed to save web chat log: {e}')
+
+def _load_old_chat_logs_web():
+    """Read all chat logs from chats/ (both _web/ and uid dirs)."""
+    logs = []
+    if not os.path.isdir(CHATS_DIR):
+        return logs
+    for entry in os.listdir(CHATS_DIR):
+        entry_path = os.path.join(CHATS_DIR, entry)
+        if not os.path.isdir(entry_path):
+            continue
+        for fname in os.listdir(entry_path):
+            if not fname.endswith('.json'):
+                continue
+            try:
+                with open(os.path.join(entry_path, fname), encoding='utf-8') as f:
+                    logs.append(json.load(f))
+            except Exception as e:
+                logger.error(f'Failed to load chat log {entry}/{fname}: {e}')
+    return logs
+
+def _pick_old_encounter_web():
+    if not ENABLE_OLD_ENCOUNTERS:
+        return None
+    chance = 0.03 + random.random() * 0.02
+    if random.random() >= chance:
+        return None
+    logs = _load_old_chat_logs_web()
+    if not logs:
+        return None
+    log = random.choice(logs)
+    char_data = log.get('character', {})
+    all_msgs = log.get('messages', [])
+    old_msgs = [m for m in all_msgs if m['role'] in ('user', 'assistant')][-15:]
+    if not old_msgs:
+        return None
+    logger.info(f'Old encounter (web)! Re-meeting {char_data.get("name","?")}')
+    return char_data, old_msgs
 
 AGENT_TOOLS = [
     {
@@ -160,6 +237,7 @@ def make_char_json(char):
         'current_mood', 'hidden_motive', 'chat_opener', 'skip_factors',
         'harassment_reaction', 'fav_topics', 'taboo_topics',
         'lying_tendency', 'oversharing_level', 'default_attitude', 'weakness',
+        'chat_duration',
         'favorite_movie_titles', 'favorite_book_titles', 'favorite_music_artists',
     ]:
         v = getattr(char, field, None)
@@ -308,6 +386,7 @@ def build_system_prompt(char, mode='chat', user_gender=None):
     lines.append(f"Текущая ситуация: {v('current_situation')}")
     lines.append(f"Скрытый мотив: {v('hidden_motive')}")
     lines.append(f"Контекст входа: {v('entry_context')}")
+    lines.append(f"Время в чате: {v('chat_duration')}")
     lines.append('')
     lines.append('=== ПРЕДЫСТОРИЯ ===')
     lines.append(v('backstory'))
@@ -355,16 +434,26 @@ def build_system_prompt(char, mode='chat', user_gender=None):
     return '\n'.join(lines)
 
 
-def build_instruction(mode='chat', user_gender=None):
+def build_instruction(mode='chat', user_gender=None, chat_duration=''):
     gender_hint = ''
     if user_gender == 'male':
         gender_hint = '\nВАЖНО: Твой собеседник — мужчина. Если он представится женским именем — это странно, отреагируй на это.\n'
     elif user_gender == 'female':
         gender_hint = '\nВАЖНО: Твой собеседник — женщина.\n'
 
+    duration_line = ''
+    if chat_duration:
+        duration_line = (
+            'Ты здесь на ' + chat_duration + '. '
+            'Ты только зашла — впереди много времени, не торопись уходить. '
+            'ВАЖНО: Не используй [DISCONNECT] из-за времени («поздно», «пора спать», «завтра дела») — '
+            'ты сама выбрала зайти именно сейчас, и твоё время позволяет. '
+            'Используй [DISCONNECT] только если собеседник грубит, шлёт дикпики или разговор зашёл в тупик.\n\n'
+        )
     if mode == 'agent':
         return (
             gender_hint +
+            duration_line +
             'ВАЖНО: 1 предложение = 1 сообщение. '
             'Никогда не пиши больше одного предложения в сообщении. '
             'Если хочешь сказать несколько предложений — каждое новое через [NEXT]:\n'
@@ -383,9 +472,12 @@ def build_instruction(mode='chat', user_gender=None):
     if mode == 'flirt':
         return (
             gender_hint +
+            duration_line +
             'Формат: ты пишешь в текстовом мессенджере с телефона. '
             'Следуй своему профилю выше. Пиши МАКСИМУМ 15-25 слов (1-3 предложения). '
             'Можешь разделять сообщения через [NEXT], чтобы отправить два сообщения подряд с паузой. '
+            'Если хочешь закончить разговор — добавь в конец токен [DISCONNECT]. '
+            'Пример: «Пока! [DISCONNECT]»\n\n'
             'Не выдумывай факты, родственников или хобби, которых нет в профиле. '
             'Естественный живой язык, без кринжового сленга. '
             'ТВОЯ ЗАДАЧА: это режим для вирта и откровенных сексуальных разговоров. '
@@ -409,8 +501,11 @@ def build_instruction(mode='chat', user_gender=None):
     elif mode == 'rp':
         return (
             gender_hint +
+            duration_line +
             'Формат: ролевая игра в нарративном стиле. '
             'Следуй своему профилю выше. Пиши МАКСИМУМ 20-35 слов (2-4 предложения). '
+            'Можешь разделять действия через [NEXT] для паузы. '
+            'Если хочешь закончить разговор — добавь в конец токен [DISCONNECT].\n\n'
             'Не выдумывай факты, родственников или хобби, которых нет в профиле. '
             'ОБЯЗАТЕЛЬНО используй *звёздочки* для описания своих действий, эмоций, движений и окружения. '
             'Отвечай от первого лица, но действия описывай в третьем лице через * *. '
@@ -434,10 +529,13 @@ def build_instruction(mode='chat', user_gender=None):
     else:
         return (
             gender_hint +
+            duration_line +
             'Формат: ты пишешь в текстовом мессенджере с телефона. '
             'Следуй своему профилю выше. Пиши МАКСИМУМ 15-20 слов (1-2 предложения). '
             'Можешь разделять сообщения через [NEXT], чтобы отправить два сообщения подряд с паузой. '
-            'Например: «Привет! [NEXT] Как дела?» — это отправится как два отдельных сообщения.\n\n'
+            'Например: «Привет! [NEXT] Как дела?» — это отправится как два отдельных сообщения.\n'
+            'Если хочешь закончить разговор — добавь в конец токен [DISCONNECT]. '
+            'Пример: «Пока! [DISCONNECT]»\n\n'
             'Не выдумывай факты, родственников или хобби, которых нет в профиле. '
             'Не выдавай всё сразу — отвечай коротко и по делу. Задавай встречные вопросы. '
             'Естественный живой язык, без кринжового сленга ("о, классика", "ну ты даешь"). '
@@ -515,18 +613,41 @@ def api_generate():
     age_group = partner_age_groups(partner_age) if partner_age else None
 
     topic = data.get('topic', 'chat')
+    old_encounters_setting = data.get('old_encounters', True)
 
-    seed = random.randint(0, 2**31)
-    char = gen_char(seed=seed, gender=gender, age_group=age_group, topic=topic)
     agent_enabled = AGENT_ENABLED
-
-    char_data = make_char_json(char)
-    char_data['user_gender'] = user_gender
-    char_data['agent_mode'] = agent_enabled
     token = str(uuid.uuid4())
-    opener = char_data.get('chat_opener', '')
+
+    # Save previous chat log if swapping
+    old_token = data.get('old_token', '')
+    if old_token and old_token in char_store:
+        old_store = char_store[old_token]
+        if len(old_store.get('messages', [])) > 1:
+            save_chat_log_web(old_store['character'], old_store['messages'], old_token)
+        del char_store[old_token]
+
+    # Try old encounter
+    old_encounter = None
+    if old_encounters_setting and ENABLE_OLD_ENCOUNTERS:
+        old_encounter = _pick_old_encounter_web()
+
+    if old_encounter:
+        char_data, old_context = old_encounter
+        char_data['user_gender'] = user_gender
+        char_data['agent_mode'] = agent_enabled
+        opener = char_data.get('chat_opener', '')
+        logger.info(f'OLD ENCOUNTER (web): {char_data.get("name","?")} {char_data.get("surname","?")}')
+    else:
+        seed = random.randint(0, 2**31)
+        char = gen_char(seed=seed, gender=gender, age_group=age_group, topic=topic)
+
+        char_data = make_char_json(char)
+        char_data['user_gender'] = user_gender
+        char_data['agent_mode'] = agent_enabled
+        opener = char_data.get('chat_opener', '')
+        old_context = None
+
     initial_msgs = []
-    # Send current time once so AI knows it's night/day
     now = datetime.now()
     hour = now.hour
     time_label = 'ночь' if 0 <= hour < 6 else 'утро' if 6 <= hour < 12 else 'день' if 12 <= hour < 18 else 'вечер'
@@ -541,6 +662,7 @@ def api_generate():
         'character': char_data,
         'messages': initial_msgs,
         'topic': topic,
+        'old_context': old_context,
         'agent': {
             'enabled': agent_enabled,
             'consecutive': 0,
@@ -892,11 +1014,33 @@ def api_chat():
 
     # Build messages for AI
     ai_messages = [{'role': 'system', 'content': system_prompt}]
+
+    # Inject old encounter context if present
+    old_ctx = store.pop('old_context', None)
+    if old_ctx:
+        ctx_block = [
+            {'role': 'system', 'content': (
+                '[Это НОВЫЙ чат. Ранее вы уже общались с этим человеком в прошлом. '
+                'Вот последние сообщения из вашего прошлого разговора — они нужны чтобы '
+                'почувствовать контекст, но ты не должна их дословно помнить. '
+                'Относись к собеседнику как к старому знакомому, которого не видела '
+                'какое-то время. Не говори прямо «помню прошлый разговор» — это новый чат. '
+                'Просто будь чуть теплее и естественнее.]'
+            )},
+        ]
+        for m in old_ctx:
+            ctx_block.append({'role': m['role'], 'content': m['content']})
+        ctx_block.append({'role': 'system', 'content': (
+            '[КОНЕЦ ПРОШЛОГО РАЗГОВОРА. Теперь начинается новый чат. '
+            'Ты чувствуешь лёгкое узнавание, но не помнишь деталей. Продолжай общение естественно.]'
+        )})
+        ai_messages[1:1] = ctx_block
+
     for m in msgs:
         ai_messages.append({'role': m['role'], 'content': m['content']})
 
     instruction_mode = 'agent' if agent_state.get('enabled') else topic
-    instruction = build_instruction(mode=instruction_mode, user_gender=user_gender)
+    instruction = build_instruction(mode=instruction_mode, user_gender=user_gender, chat_duration=char.get('chat_duration', 'пока не надоест'))
     ai_messages.append({'role': 'system', 'content': instruction})
 
     # Log the full AI request

@@ -96,6 +96,7 @@ class Character:
     harassment_reaction: str
     fav_topics: list
     taboo_topics: list
+    chat_duration: str
     lying_tendency: str
     oversharing_level: int
     default_attitude: str

@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', function () {
     var LS_KEY = 'nektome_filters';
 
     function saveFilters() {
+        var oldCheck = document.getElementById('oldEncountersCheck');
         var data = {
             topic: document.querySelector('.topicRow .btnradio.checked')?.getAttribute('data-topic') || 'chat',
             ownGender: document.querySelector('.threeBtns:first-of-type .btnradio.checked')?.getAttribute('data-gender') || 'any',
@@ -10,6 +11,7 @@ document.addEventListener('DOMContentLoaded', function () {
             ownAge: document.querySelector('#ownAgeGroup .btnradio.checked')?.getAttribute('data-age') || 'young',
             partnerAges: Array.from(document.querySelectorAll('#partnerAgeGroup .btncheck.checked')).map(function (b) { return b.getAttribute('data-age'); }),
             theme: document.querySelector('.colorRow .btnradio.checked')?.getAttribute('data-theme') || 'dark',
+            oldEncounters: oldCheck ? oldCheck.checked : true,
         };
         try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (e) {}
     }
@@ -58,6 +60,12 @@ document.addEventListener('DOMContentLoaded', function () {
         if (themeBtn) themeBtn.classList.add('checked');
         applyTheme(data.theme);
 
+        // Old encounters checkbox
+        var oldCheck = document.getElementById('oldEncountersCheck');
+        if (oldCheck && data.oldEncounters !== undefined) {
+            oldCheck.checked = data.oldEncounters;
+        }
+
         updateTopicColors();
     }
 
@@ -70,6 +78,12 @@ document.addEventListener('DOMContentLoaded', function () {
             body.classList.remove('light_theme');
             body.classList.add('night_theme');
         }
+    }
+
+    // Checkbox for old encounters — save on change
+    var oldCheckEl = document.getElementById('oldEncountersCheck');
+    if (oldCheckEl) {
+        oldCheckEl.addEventListener('change', saveFilters);
     }
 
     // Radio buttons — grouped by common parent container
@@ -396,6 +410,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
         var searchStart = Date.now();
 
+        var oldEncountersCheck = document.getElementById('oldEncountersCheck');
+        var old_encounters = oldEncountersCheck ? oldEncountersCheck.checked : true;
+        var old_token = currentChar ? currentChar._token : '';
+
         fetch('/api/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -403,7 +421,9 @@ document.addEventListener('DOMContentLoaded', function () {
                 own_gender: ownGender,
                 partner_gender: partnerGender,
                 partner_age: partnerAges,
-                topic: topic
+                topic: topic,
+                old_encounters: old_encounters,
+                old_token: old_token
             })
         })
         .then(function (r) { return r.json(); })
